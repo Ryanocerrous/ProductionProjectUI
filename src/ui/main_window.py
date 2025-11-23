@@ -13,6 +13,12 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     ThemedStyle = None
 
+try:
+    from PIL import Image, ImageTk
+except Exception:  # pragma: no cover - optional dependency
+    Image = None
+    ImageTk = None
+
 from logic import controls
 from logic.system_info import get_battery_percentage
 
@@ -63,15 +69,16 @@ def _configure_style(master: tk.Tk) -> None:
             style.theme_use("clam")
     style.configure("TFrame", background=PALETTE["bg"])
     style.configure("TLabel", background=PALETTE["bg"], foreground=PALETTE["text"])
-    style.configure("Panel.TFrame", background=PALETTE["panel"])
+    style.configure("Panel.TFrame", background=PALETTE["bg"])
+    style.configure("Bg.TFrame", background=PALETTE["bg"])
 
     if BOOTSTRAP_ACTIVE:
         return
 
     style.configure(
         "Menu.TButton",
-        font=("Helvetica", 18, "bold"),
-        padding=(24, 18),
+        font=("Helvetica", 20, "bold"),
+        padding=(28, 22),
         background=PALETTE["panel"],
         foreground=PALETTE["text"],
         borderwidth=1,
@@ -79,8 +86,8 @@ def _configure_style(master: tk.Tk) -> None:
     )
     style.configure(
         "Selected.TButton",
-        font=("Helvetica", 18, "bold"),
-        padding=(24, 18),
+        font=("Helvetica", 20, "bold"),
+        padding=(28, 22),
         background=PALETTE["primary"],
         foreground=PALETTE["bg"],
         borderwidth=1,
@@ -124,8 +131,8 @@ def _configure_style(master: tk.Tk) -> None:
 class MainWindow(ttk.Frame):
     def __init__(self, master: tk.Tk) -> None:
         _configure_style(master)
-        super().__init__(master, padding=24)
-        self.configure(style="Panel.TFrame")
+        super().__init__(master, padding=2)
+        self.configure(style="Bg.TFrame")
         self.grid(sticky="nsew")
         master.columnconfigure(0, weight=1)
         master.rowconfigure(0, weight=1)
@@ -134,6 +141,9 @@ class MainWindow(ttk.Frame):
         self.selected_index = 0
         self.current_screen = "home"
         self.logo_img: Optional[tk.PhotoImage] = self._load_logo()
+        self.splash_img: Optional[tk.PhotoImage] = self._load_image("src/assets/bb.png")
+        self.bg_img: Optional[tk.PhotoImage] = self._load_image("src/assets/bg.jpg", size=(800, 480))
+        self.bg_label: Optional[tk.Label] = None
         self.theme = tk.StringVar(value="dark")
         self.settings_state = {
             "dark_mode": tk.BooleanVar(value=True),
@@ -143,6 +153,7 @@ class MainWindow(ttk.Frame):
         self.progress_var: Optional[tk.DoubleVar] = None
         self.current_action_command: Optional[Callable[[], None]] = None
         self.splash_after_id: Optional[str] = None
+        self.center_frame: Optional[ttk.Frame] = None  # deprecated (kept for cleanup)
 
         self.battery_var = tk.StringVar(value="Battery: --%")
         self.status_var = tk.StringVar(value="Use Left/Right to navigate. Enter to select.")
@@ -157,7 +168,7 @@ class MainWindow(ttk.Frame):
         self.columnconfigure(0, weight=1)
 
         self._build_top_bar()
-        self.content_frame = ttk.Frame(self)
+        self.content_frame = ttk.Frame(self, style="Bg.TFrame")
         self.content_frame.grid(row=1, column=0, sticky="nsew")
         for i in range(3):
             self.content_frame.columnconfigure(i, weight=1)
@@ -167,7 +178,7 @@ class MainWindow(ttk.Frame):
         self._show_splash()
 
     def _build_top_bar(self) -> None:
-        top = ttk.Frame(self)
+        top = ttk.Frame(self, style="Bg.TFrame")
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(0, weight=1)
         top.columnconfigure(1, weight=2)
@@ -185,7 +196,8 @@ class MainWindow(ttk.Frame):
 
     def _build_bottom_bar(self) -> None:
         status = ttk.Label(self, textvariable=self.status_var, font=("Helvetica", 11), foreground=PALETTE["muted"])
-        status.grid(row=2, column=0, sticky="w")
+        status.grid(row=2, column=0, sticky="we")
+        self.columnconfigure(0, weight=1)
 
     def _clear_content(self) -> None:
         for child in self.content_frame.winfo_children():
@@ -196,50 +208,37 @@ class MainWindow(ttk.Frame):
         if self.splash_after_id:
             self.after_cancel(self.splash_after_id)
             self.splash_after_id = None
+        if self.bg_label:
+            self.bg_label.destroy()
+            self.bg_label = None
+        if self.center_frame:
+            self.center_frame.destroy()
+            self.center_frame = None
 
     def _show_home(self) -> None:
         self.current_screen = "home"
         self._clear_content()
         self.status_var.set("Use Left/Right to navigate. Enter to select.")
 
-        wrapper = ttk.Frame(self.content_frame, style="Panel.TFrame", padding=16)
-        wrapper.grid(row=0, column=1, sticky="n")
-        wrapper.columnconfigure(0, weight=1)
+        self._set_background()
 
-        container = ttk.Frame(wrapper, style="Panel.TFrame", padding=16)
-        container.grid(row=0, column=0, sticky="n")
-        container.columnconfigure(0, weight=1)
-        container.columnconfigure(1, weight=1)
-        container.rowconfigure(0, weight=1)
-        container.rowconfigure(1, weight=1)
-        container.rowconfigure(2, weight=1)
-
-        # Logo centered above menu
         if self.logo_img:
-            logo_label = ttk.Label(container, image=self.logo_img, anchor="center")
-            logo_label.grid(row=0, column=0, columnspan=2, pady=(0, 24))
-        else:
-            fallback = ttk.Label(
-                container,
-                text="[ByteBite Logo]",
-                anchor="center",
-                font=("Helvetica", 14, "bold"),
-                foreground=PALETTE["muted"],
-            )
-            fallback.grid(row=0, column=0, columnspan=2, pady=(0, 24))
+            logo_label = ttk.Label(self.content_frame, image=self.logo_img, anchor="center", style="Bg.TFrame")
+            logo_label.place(relx=0.5, rely=0.2, anchor="center")
 
-        menu = ttk.Frame(container)
-        menu.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
-        menu.columnconfigure(0, weight=1)
-        menu.columnconfigure(1, weight=1)
-        menu.rowconfigure(0, weight=1)
-        menu.rowconfigure(1, weight=1)
-
-        self._add_menu_button(menu, row=0, col=0, label="Forensic", command=self._on_forensic)
-        self._add_menu_button(menu, row=0, col=1, label="Offensive", command=self._on_offensive)
-
-        self._add_menu_button(menu, row=1, col=0, label="Settings", command=self._on_settings, align="w")
-        self._add_menu_button(menu, row=1, col=1, label="About", command=self._on_about, align="e")
+        # Place buttons individually on the background (no shared container)
+        self._add_menu_button(
+            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.45, rely=0.5, width=40, ipady=10
+        )
+        self._add_menu_button(
+            self.content_frame, label="Offensive", command=self._on_offensive, relx=0.55, rely=0.5, width=40, ipady=10
+        )
+        self._add_menu_button(
+            self.content_frame, label="Settings", command=self._on_settings, relx=0.05, rely=0.9, align="w", width=12
+        )
+        self._add_menu_button(
+            self.content_frame, label="About", command=self._on_about, relx=0.95, rely=0.9, align="e", width=12
+        )
 
         self._update_selection()
 
@@ -249,12 +248,12 @@ class MainWindow(ttk.Frame):
         if self.splash_after_id:
             self.after_cancel(self.splash_after_id)
 
-        splash = ttk.Frame(self.content_frame, style="Panel.TFrame", padding=24)
+        splash = ttk.Frame(self.content_frame, style="Bg.TFrame", padding=24)
         splash.grid(row=0, column=1, sticky="n")
         splash.columnconfigure(0, weight=1)
 
-        if self.logo_img:
-            logo = ttk.Label(splash, image=self.logo_img, anchor="center")
+        if self.splash_img:
+            logo = ttk.Label(splash, image=self.splash_img, anchor="center")
             logo.grid(row=0, column=0, pady=(10, 18))
         else:
             fallback = ttk.Label(
@@ -280,8 +279,11 @@ class MainWindow(ttk.Frame):
     def _show_detail_screen(self, title: str, body: str) -> None:
         self.current_screen = title.lower()
         self._clear_content()
-        detail = ttk.Frame(self.content_frame, style="Panel.TFrame", padding=16)
-        detail.grid(row=0, column=0, sticky="nsew", pady=(24, 0))
+        self._set_background()
+        self.center_frame = ttk.Frame(self.content_frame, style="Bg.TFrame", padding=0)
+        self.center_frame.place(relx=0.5, rely=0.5, anchor="center")
+        detail = ttk.Frame(self.center_frame, style="Bg.TFrame", padding=8)
+        detail.grid(row=0, column=0, sticky="n")
         detail.columnconfigure(0, weight=1)
 
         heading = ttk.Label(detail, text=title, font=("Helvetica", 20, "bold"), anchor="center")
@@ -303,9 +305,12 @@ class MainWindow(ttk.Frame):
     ) -> None:
         self.current_screen = title.lower()
         self._clear_content()
+        self._set_background()
 
-        wrapper = ttk.Frame(self.content_frame, padding=12)
-        wrapper.grid(row=0, column=1, sticky="n")
+        self.center_frame = ttk.Frame(self.content_frame, style="Bg.TFrame", padding=0)
+        self.center_frame.place(relx=0.5, rely=0.5, anchor="center")
+        wrapper = ttk.Frame(self.center_frame, style="Bg.TFrame", padding=8)
+        wrapper.grid(row=0, column=0, sticky="n")
         wrapper.columnconfigure(0, weight=1)
 
         heading = ttk.Label(wrapper, text=title, font=("Helvetica", 20, "bold"), anchor="center")
@@ -319,7 +324,7 @@ class MainWindow(ttk.Frame):
         )
         subtitle.grid(row=1, column=0, pady=(0, 18))
 
-        options_frame = ttk.Frame(wrapper, style="Panel.TFrame")
+        options_frame = ttk.Frame(wrapper, style="Bg.TFrame")
         options_frame.grid(row=2, column=0, sticky="ew", pady=(0, 18))
         options_frame.columnconfigure(0, weight=1)
 
@@ -358,7 +363,7 @@ class MainWindow(ttk.Frame):
     def _show_progress_screen(self, title: str, on_cancel: Callable[[], None]) -> None:
         self.current_screen = f"{title.lower()}_progress"
         self._clear_content()
-        wrap = ttk.Frame(self.content_frame, padding=12)
+        wrap = ttk.Frame(self.content_frame, style="Bg.TFrame", padding=8)
         wrap.grid(row=0, column=1, sticky="n")
         wrap.columnconfigure(0, weight=1)
 
@@ -381,22 +386,56 @@ class MainWindow(ttk.Frame):
     def _add_menu_button(
         self,
         parent: ttk.Frame,
-        row: int,
-        col: int,
         label: str,
         command: Callable[[], None],
+        row: Optional[int] = None,
+        col: Optional[int] = None,
+        relx: Optional[float] = None,
+        rely: Optional[float] = None,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
         align: str | None = None,
+        width: Optional[int] = None,
+        sticky: str | None = None,
+        ipady: Optional[int] = None,
     ) -> None:
         if BOOTSTRAP_ACTIVE:
-            btn = ttk.Button(parent, text=label, command=command, takefocus=False, bootstyle="secondary", width=18)
+            btn = ttk.Button(
+                parent,
+                text=label,
+                command=command,
+                takefocus=False,
+                bootstyle="secondary",
+                width=width or 18,
+            )
         else:
-            btn = ttk.Button(parent, text=label, style="Menu.TButton", command=command, takefocus=False, width=18)
+            btn = ttk.Button(
+                parent,
+                text=label,
+                style="Menu.TButton",
+                command=command,
+                takefocus=False,
+                width=width or 18,
+            )
         sticky = "nsew"
+        if sticky:
+            sticky = sticky
         if align == "w":
-            sticky = "sw"
+            sticky = "w"
         elif align == "e":
-            sticky = "se"
-        btn.grid(row=row, column=col, padx=22, pady=16, sticky=sticky, ipady=12)
+            sticky = "e"
+        if relx is not None and rely is not None:
+            anchor = "center"
+            if sticky in ("w", "e", "n", "s", "nw", "ne", "sw", "se"):
+                anchor = sticky
+            btn.place(relx=relx, rely=rely, anchor=anchor)
+        elif x is not None and y is not None:
+            anchor = "center"
+            if sticky in ("w", "e", "n", "s", "nw", "ne", "sw", "se"):
+                anchor = sticky
+            btn.place(x=x, y=y, anchor=anchor)
+        else:
+            btn.grid(row=row or 0, column=col or 0, padx=22, pady=16, sticky=sticky or "nsew", ipady=ipady or 16)
         self.menu_items.append({"button": btn, "command": command})
 
     # Navigation
@@ -486,7 +525,7 @@ class MainWindow(ttk.Frame):
 
     def _on_about(self) -> None:
         message = controls.show_about()
-        self.status_var.set(message)
+        self.status_var.set("About")
         self._show_detail_screen("About", message)
 
     # Battery
@@ -501,10 +540,27 @@ class MainWindow(ttk.Frame):
         self.after(15000, self._refresh_battery)
 
     def _load_logo(self) -> Optional[tk.PhotoImage]:
+        return self._load_image("src/assets/logo.png")
+
+    def _load_image(self, path: str, size: Optional[tuple[int, int]] = None) -> Optional[tk.PhotoImage]:
+        if Image is None or ImageTk is None:
+            try:
+                return tk.PhotoImage(file=path)
+            except Exception:
+                return None
         try:
-            return tk.PhotoImage(file="src/assets/logo.png")
+            img = Image.open(path)
+            if size:
+                img = img.resize(size, Image.LANCZOS)
+            return ImageTk.PhotoImage(img)
         except Exception:
             return None
+
+    def _set_background(self) -> None:
+        if not self.bg_img:
+            return
+        self.bg_label = tk.Label(self.content_frame, image=self.bg_img, borderwidth=0, highlightthickness=0)
+        self.bg_label.place(relx=0.5, rely=0.5, anchor="center", relwidth=1, relheight=1)
 
     # Task orchestration (stubbed)
     def _start_task(self, title: str, options: Dict[str, tk.BooleanVar]) -> None:

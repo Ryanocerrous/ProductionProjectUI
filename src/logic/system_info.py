@@ -49,6 +49,11 @@ def get_system_summary() -> str:
 
 def get_battery_percentage() -> int | None:
     """Best-effort battery percentage reader; returns None if not available."""
+    # Try upower if present
+    pct = _read_upower_percentage()
+    if pct is not None:
+        return pct
+
     candidates = [
         "/sys/class/power_supply/BAT0/capacity",
         "/sys/class/power_supply/battery/capacity",
@@ -62,6 +67,24 @@ def get_battery_percentage() -> int | None:
                 return value
         except Exception:
             continue
+    return None
+
+
+def _read_upower_percentage() -> int | None:
+    try:
+        devices = subprocess.check_output(["upower", "-e"], text=True).splitlines()
+        battery = next((d for d in devices if "battery" in d.lower()), None)
+        if not battery:
+            return None
+        info = subprocess.check_output(["upower", "-i", battery], text=True).splitlines()
+        for line in info:
+            if "percentage" in line.lower():
+                raw = line.split(":")[1].strip().rstrip("%")
+                value = int(raw)
+                if 0 <= value <= 100:
+                    return value
+    except Exception:
+        return None
     return None
 
 
