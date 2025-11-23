@@ -1,0 +1,18 @@
+[Unit]
+Description=ByteBite UI autostart
+After=network.target getty@tty1.service
+Wants=network-online.target getty@tty1.service
+
+[Service]
+User=kali
+WorkingDirectory=/home/kali/ProductionProjectUI
+ExecStart=/home/kali/ProductionProjectUI/run_app.sh
+Restart=always
+RestartSec=5
+StandardInput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+
+[Install]
+WantedBy=multi-user.target
