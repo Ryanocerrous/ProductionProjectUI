@@ -10,5 +10,17 @@ else
   .venv/bin/pip install --quiet --upgrade ttkbootstrap ttkthemes Pillow
 fi
 
-# Start X on vt1 and launch the app
-exec /usr/bin/startx /home/kali/ProductionProjectUI/.venv/bin/python3 /home/kali/ProductionProjectUI/src/app.py -- :0 -nolisten tcp vt1 -keeptty
+# Prefer an existing X server (lightdm, etc.). Fallback to :1 if :0 not available.
+DISPLAY_TARGET=":0"
+if [ ! -S /tmp/.X11-unix/X0 ] && [ -S /tmp/.X11-unix/X1 ]; then
+  DISPLAY_TARGET=":1"
+fi
+
+APP_CMD="/home/kali/ProductionProjectUI/.venv/bin/python /home/kali/ProductionProjectUI/src/app.py"
+
+# If no X server is running, start a temporary one just for the app.
+if [ ! -S /tmp/.X11-unix/X0 ] && [ ! -S /tmp/.X11-unix/X1 ]; then
+  exec /usr/bin/startx $APP_CMD -- :0 -nolisten tcp vt1 -keeptty
+fi
+
+exec env DISPLAY=$DISPLAY_TARGET XAUTHORITY=/home/kali/.Xauthority $APP_CMD
