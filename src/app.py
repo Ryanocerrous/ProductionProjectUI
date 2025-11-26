@@ -1,6 +1,7 @@
 """Entry point for the ByteBite UI running on the Raspberry Pi."""
 import os
 import sys
+from buttons import init_buttons
 
 # Prefer local virtualenv packages (ttkthemes lives here)
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
