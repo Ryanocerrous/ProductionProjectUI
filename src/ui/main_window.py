@@ -209,16 +209,16 @@ class MainWindow(ttk.Frame):
 
         # Place buttons individually on the background (no shared container)
         self._add_menu_button(
-            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.1, rely=0.5, width=40, ipady=30
+            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.35, rely=0.5, width=18, ipady=16
         )
         self._add_menu_button(
-            self.content_frame, label="Offensive", command=self._on_offensive, relx=1, rely=0.5, width=40, ipady=30
+            self.content_frame, label="Offensive", command=self._on_offensive, relx=0.65, rely=0.5, width=18, ipady=16
         )
         self._add_menu_button(
-            self.content_frame, label="Settings", command=self._on_settings, relx=0.05, rely=0.9, align="w", width=12
+            self.content_frame, label="Settings", command=self._on_settings, relx=0.1, rely=0.9, align="w", width=12
         )
         self._add_menu_button(
-            self.content_frame, label="About", command=self._on_about, relx=0.95, rely=0.9, align="e", width=12
+            self.content_frame, label="About", command=self._on_about, relx=0.9, rely=0.9, align="e", width=12
         )
 
         self._update_selection()
@@ -522,6 +522,7 @@ class MainWindow(ttk.Frame):
             return
         self.bg_label = tk.Label(self.content_frame, image=self.bg_img, borderwidth=0, highlightthickness=0)
         self.bg_label.place(relx=0.5, rely=0.5, anchor="center", relwidth=1, relheight=1)
+        self.bg_label.lower()
 
     # Task orchestration (stubbed)
     def _start_task(self, title: str, options: Dict[str, tk.BooleanVar]) -> None:

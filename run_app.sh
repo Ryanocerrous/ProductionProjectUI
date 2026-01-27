@@ -1,14 +1,11 @@
 #!/usr/bin/env bash
 set -e
 cd /home/kali/ProductionProjectUI
-# ensure venv exists
-if [ ! -x .venv/bin/python3 ]; then
-  python3 -m venv .venv
-  .venv/bin/pip install --quiet ttkbootstrap ttkthemes Pillow
-else
-  # Make sure required deps are present even if the venv already existed
-  .venv/bin/pip install --quiet --upgrade ttkbootstrap ttkthemes Pillow
-fi
+# Always rebuild the venv on device to avoid macOS binaries being copied in
+rm -rf .venv
+python3 -m venv .venv
+.venv/bin/pip install --quiet --upgrade pip
+.venv/bin/pip install --quiet ttkbootstrap ttkthemes Pillow
 
 # Prefer an existing X server (lightdm, etc.). Fallback to :1 if :0 not available.
 DISPLAY_TARGET=":0"

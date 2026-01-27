@@ -39,7 +39,11 @@ def main() -> None:
     root.title("ByteBite UI")
     root.geometry("800x480")
     root.minsize(800, 480)
-    MainWindow(root)
+
+    gui = MainWindow(root)
+    # Initialise GPIO buttons (stubbed; no-op on desktop)
+    init_buttons()
+
     root.mainloop()
 
 
