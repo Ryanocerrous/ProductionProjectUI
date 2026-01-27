@@ -209,16 +209,40 @@ class MainWindow(ttk.Frame):
 
         # Place buttons individually on the background (no shared container)
         self._add_menu_button(
-            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.35, rely=0.5, width=18, ipady=16
+            self.content_frame,
+            label="Forensic",
+            command=self._on_forensic,
+            relx=0.33,
+            rely=0.5,
+            place_width=200,
+            place_height=90,
         )
         self._add_menu_button(
-            self.content_frame, label="Offensive", command=self._on_offensive, relx=0.65, rely=0.5, width=18, ipady=16
+            self.content_frame,
+            label="Offensive",
+            command=self._on_offensive,
+            relx=0.67,
+            rely=0.5,
+            place_width=200,
+            place_height=90,
         )
         self._add_menu_button(
-            self.content_frame, label="Settings", command=self._on_settings, relx=0.1, rely=0.9, align="w", width=12
+            self.content_frame,
+            label="Settings",
+            command=self._on_settings,
+            relx=0.15,
+            rely=0.86,
+            place_width=170,
+            place_height=80,
         )
         self._add_menu_button(
-            self.content_frame, label="About", command=self._on_about, relx=0.9, rely=0.9, align="e", width=12
+            self.content_frame,
+            label="About",
+            command=self._on_about,
+            relx=0.85,
+            rely=0.86,
+            place_width=170,
+            place_height=80,
         )
 
         self._update_selection()
@@ -372,6 +396,8 @@ class MainWindow(ttk.Frame):
         width: Optional[int] = None,
         sticky: str | None = None,
         ipady: Optional[int] = None,
+        place_width: Optional[int] = None,
+        place_height: Optional[int] = None,
     ) -> None:
         btn = ttk.Button(
             parent,
@@ -392,12 +418,26 @@ class MainWindow(ttk.Frame):
             anchor = "center"
             if sticky in ("w", "e", "n", "s", "nw", "ne", "sw", "se"):
                 anchor = sticky
-            btn.place(relx=relx, rely=rely, anchor=anchor)
+            kwargs = {"relx": relx, "rely": rely, "anchor": anchor}
+            if place_width:
+                kwargs["width"] = place_width
+            if place_height:
+                kwargs["height"] = place_height
+            if x is not None:
+                kwargs["x"] = x
+            if y is not None:
+                kwargs["y"] = y
+            btn.place(**kwargs)
         elif x is not None and y is not None:
             anchor = "center"
             if sticky in ("w", "e", "n", "s", "nw", "ne", "sw", "se"):
                 anchor = sticky
-            btn.place(x=x, y=y, anchor=anchor)
+            kwargs = {"x": x, "y": y, "anchor": anchor}
+            if place_width:
+                kwargs["width"] = place_width
+            if place_height:
+                kwargs["height"] = place_height
+            btn.place(**kwargs)
         else:
             btn.grid(row=row or 0, column=col or 0, padx=22, pady=16, sticky=sticky or "nsew", ipady=ipady or 16)
         self.menu_items.append({"button": btn, "command": command})
