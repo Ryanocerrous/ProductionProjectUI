@@ -3,9 +3,9 @@ set -e
 cd /home/kali/ProductionProjectUI
 # Always rebuild the venv on device to avoid macOS binaries being copied in
 rm -rf .venv
-python3 -m venv .venv
-.venv/bin/pip install --quiet --upgrade pip
-.venv/bin/pip install --quiet ttkbootstrap ttkthemes Pillow
+python3 -m venv .venv || exit 0
+.venv/bin/pip install --no-cache-dir --quiet --upgrade pip
+.venv/bin/pip install --no-cache-dir --quiet ttkthemes Pillow ttkbootstrap
 
 # Avoid multiple instances
 if pgrep -f "/home/kali/ProductionProjectUI/src/app.py" >/dev/null; then
@@ -24,4 +24,4 @@ fi
 
 APP_CMD="/home/kali/ProductionProjectUI/.venv/bin/python /home/kali/ProductionProjectUI/src/app.py"
 
-exec env DISPLAY=$DISPLAY_TARGET XAUTHORITY=/home/kali/.Xauthority $APP_CMD
+exec env DISPLAY=$DISPLAY_TARGET XAUTHORITY=/home/kali/.Xauthority $APP_CMD >> /tmp/bytebite.log 2>&1
