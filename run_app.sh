@@ -5,7 +5,7 @@ cd /home/kali/ProductionProjectUI
 rm -rf .venv
 python3 -m venv .venv || exit 0
 .venv/bin/pip install --no-cache-dir --quiet --upgrade pip
-.venv/bin/pip install --no-cache-dir --quiet ttkthemes Pillow ttkbootstrap
+.venv/bin/pip install --no-cache-dir --quiet Pillow
 
 # Avoid multiple instances
 if pgrep -f "/home/kali/ProductionProjectUI/src/app.py" >/dev/null; then
