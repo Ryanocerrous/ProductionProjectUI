@@ -37,17 +37,36 @@ BOOTSTRAP_ACTIVE = False
 
 
 def _configure_style(master: tk.Tk) -> None:
-    """Create a predictable ttk style. We skip ttkbootstrap bootstyles to avoid crashes."""
     global PALETTE, BOOTSTRAP_ACTIVE
-    BOOTSTRAP_ACTIVE = False  # force plain ttk styles
-    style = ThemedStyle(master) if ThemedStyle else ttk.Style(master)
-    if ThemedStyle:
+    BOOTSTRAP_ACTIVE = False
+    style = None
+    # Prefer ttkbootstrap Cyborg theme if available
+    if TBStyle:
         try:
-            style.set_theme("equilux")
+            style = TBStyle("cyborg")
+            BOOTSTRAP_ACTIVE = True
+            colors = style.colors
+            PALETTE = {
+                "bg": colors.bg,
+                "panel": colors.secondary,
+                "text": colors.fg,
+                "muted": colors.muted,
+                "primary": colors.primary,
+                "accent": colors.success,
+                "danger": colors.danger,
+                "hover": colors.selectbg,
+            }
         except Exception:
-            style.set_theme("clam")
-    else:
-        style.theme_use("clam")
+            style = None
+    if style is None:
+        style = ThemedStyle(master) if ThemedStyle else ttk.Style(master)
+        if ThemedStyle:
+            try:
+                style.set_theme("equilux")
+            except Exception:
+                style.set_theme("clam")
+        else:
+            style.theme_use("clam")
     style.configure("TFrame", background=PALETTE["bg"])
     style.configure("TLabel", background=PALETTE["bg"], foreground=PALETTE["text"])
     style.configure("Panel.TFrame", background=PALETTE["bg"])
@@ -209,40 +228,16 @@ class MainWindow(ttk.Frame):
 
         # Place buttons individually on the background (no shared container)
         self._add_menu_button(
-            self.content_frame,
-            label="Forensic",
-            command=self._on_forensic,
-            relx=0.33,
-            rely=0.5,
-            place_width=200,
-            place_height=90,
+            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.1, rely=0.5, width=40, ipady=30
         )
         self._add_menu_button(
-            self.content_frame,
-            label="Offensive",
-            command=self._on_offensive,
-            relx=0.67,
-            rely=0.5,
-            place_width=200,
-            place_height=90,
+            self.content_frame, label="Offensive", command=self._on_offensive, relx=1, rely=0.5, width=40, ipady=30
         )
         self._add_menu_button(
-            self.content_frame,
-            label="Settings",
-            command=self._on_settings,
-            relx=0.15,
-            rely=0.86,
-            place_width=170,
-            place_height=80,
+            self.content_frame, label="Settings", command=self._on_settings, relx=0.05, rely=0.9, align="w", width=12
         )
         self._add_menu_button(
-            self.content_frame,
-            label="About",
-            command=self._on_about,
-            relx=0.85,
-            rely=0.86,
-            place_width=170,
-            place_height=80,
+            self.content_frame, label="About", command=self._on_about, relx=0.95, rely=0.9, align="e", width=12
         )
 
         self._update_selection()
@@ -344,12 +339,16 @@ class MainWindow(ttk.Frame):
             toggle.grid(row=0, column=1, sticky="e")
             row += 1
 
-        action_btn = ttk.Button(
-            wrapper,
-            text=action_label,
-            command=action_command,
-            style="Accent.TButton",
-        )
+        if BOOTSTRAP_ACTIVE:
+            bootstyle = "success" if action_label.lower().startswith("extract") else "primary"
+            action_btn = ttk.Button(wrapper, text=action_label, command=action_command, takefocus=False, bootstyle=bootstyle)
+        else:
+            action_btn = ttk.Button(
+                wrapper,
+                text=action_label,
+                command=action_command,
+                style="Accent.TButton",
+            )
         action_btn.grid(row=3, column=0, pady=(10, 0), ipadx=12, ipady=8, sticky="n")
         self.current_action_command = action_command
 
@@ -375,7 +374,10 @@ class MainWindow(ttk.Frame):
         bar = ttk.Progressbar(wrap, variable=self.progress_var, mode="determinate", maximum=100, length=400)
         bar.grid(row=1, column=0, pady=(6, 12))
 
-        cancel_btn = ttk.Button(wrap, text="Cancel", command=on_cancel, style="Danger.TButton")
+        if BOOTSTRAP_ACTIVE:
+            cancel_btn = ttk.Button(wrap, text="Cancel", command=on_cancel, takefocus=False, bootstyle="danger")
+        else:
+            cancel_btn = ttk.Button(wrap, text="Cancel", command=on_cancel, style="Danger.TButton")
         cancel_btn.grid(row=2, column=0, pady=(6, 0), ipadx=12, ipady=6, sticky="n")
 
         self._simulate_progress()
@@ -396,17 +398,25 @@ class MainWindow(ttk.Frame):
         width: Optional[int] = None,
         sticky: str | None = None,
         ipady: Optional[int] = None,
-        place_width: Optional[int] = None,
-        place_height: Optional[int] = None,
     ) -> None:
-        btn = ttk.Button(
-            parent,
-            text=label,
-            style="Menu.TButton",
-            command=command,
-            takefocus=False,
-            width=width or 18,
-        )
+        if BOOTSTRAP_ACTIVE:
+            btn = ttk.Button(
+                parent,
+                text=label,
+                command=command,
+                takefocus=False,
+                bootstyle="secondary",
+                width=width or 18,
+            )
+        else:
+            btn = ttk.Button(
+                parent,
+                text=label,
+                style="Menu.TButton",
+                command=command,
+                takefocus=False,
+                width=width or 18,
+            )
         sticky = "nsew"
         if sticky:
             sticky = sticky
@@ -418,26 +428,12 @@ class MainWindow(ttk.Frame):
             anchor = "center"
             if sticky in ("w", "e", "n", "s", "nw", "ne", "sw", "se"):
                 anchor = sticky
-            kwargs = {"relx": relx, "rely": rely, "anchor": anchor}
-            if place_width:
-                kwargs["width"] = place_width
-            if place_height:
-                kwargs["height"] = place_height
-            if x is not None:
-                kwargs["x"] = x
-            if y is not None:
-                kwargs["y"] = y
-            btn.place(**kwargs)
+            btn.place(relx=relx, rely=rely, anchor=anchor)
         elif x is not None and y is not None:
             anchor = "center"
             if sticky in ("w", "e", "n", "s", "nw", "ne", "sw", "se"):
                 anchor = sticky
-            kwargs = {"x": x, "y": y, "anchor": anchor}
-            if place_width:
-                kwargs["width"] = place_width
-            if place_height:
-                kwargs["height"] = place_height
-            btn.place(**kwargs)
+            btn.place(x=x, y=y, anchor=anchor)
         else:
             btn.grid(row=row or 0, column=col or 0, padx=22, pady=16, sticky=sticky or "nsew", ipady=ipady or 16)
         self.menu_items.append({"button": btn, "command": command})
@@ -492,7 +488,10 @@ class MainWindow(ttk.Frame):
             btn: ttk.Button = item["button"]
             is_selected = idx == self.selected_index
             btn.state(["!disabled"])
-            btn.configure(style="Selected.TButton" if is_selected else "Menu.TButton")
+            if BOOTSTRAP_ACTIVE:
+                btn.configure(bootstyle="primary" if is_selected else "secondary")
+            else:
+                btn.configure(style="Selected.TButton" if is_selected else "Menu.TButton")
 
     # Actions
     def _on_forensic(self) -> None:
@@ -562,7 +561,6 @@ class MainWindow(ttk.Frame):
             return
         self.bg_label = tk.Label(self.content_frame, image=self.bg_img, borderwidth=0, highlightthickness=0)
         self.bg_label.place(relx=0.5, rely=0.5, anchor="center", relwidth=1, relheight=1)
-        self.bg_label.lower()
 
     # Task orchestration (stubbed)
     def _start_task(self, title: str, options: Dict[str, tk.BooleanVar]) -> None:

@@ -1,7 +1,6 @@
 """Entry point for the ByteBite UI running on the Raspberry Pi."""
 import os
 import sys
-from buttons import init_buttons
 
 # Prefer local virtualenv packages (ttkthemes lives here)
 _ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -39,11 +38,7 @@ def main() -> None:
     root.title("ByteBite UI")
     root.geometry("800x480")
     root.minsize(800, 480)
-
-    gui = MainWindow(root)
-    # Initialise GPIO buttons (stubbed; no-op on desktop)
-    init_buttons()
-
+    MainWindow(root)
     root.mainloop()
 
 

@@ -1,32 +1,11 @@
 #!/usr/bin/env bash
 set -e
-
-APP="/home/kali/ProductionProjectUI/src/app.py"
-PY="/usr/bin/python3"
-
-# Wait for an existing X server to appear (up to 25s)
-for i in $(seq 1 50); do
-  if [ -S /tmp/.X11-unix/X0 ]; then
-    DISPLAY_TARGET=":0"
-    break
-  elif [ -S /tmp/.X11-unix/X1 ]; then
-    DISPLAY_TARGET=":1"
-    break
-  fi
-  sleep 0.5
-done
-
-# If still no display, bail quietly; systemd will restart and retry
-if [ -z "${DISPLAY_TARGET:-}" ]; then
-  exit 0
+cd /home/kali/ProductionProjectUI
+# ensure venv exists
+if [ ! -x .venv/bin/python3 ]; then
+  python3 -m venv .venv
+  .venv/bin/pip install --quiet ttkbootstrap ttkthemes
 fi
 
-export DISPLAY="$DISPLAY_TARGET"
-export XAUTHORITY="/home/kali/.Xauthority"
-
-# Avoid multiple instances
-if pgrep -f "$APP" >/dev/null; then
-  exit 0
-fi
-
-exec "$PY" "$APP" >> /tmp/bytebite.log 2>&1
+# Start X on vt1 and launch the app
+exec /usr/bin/startx /home/kali/ProductionProjectUI/.venv/bin/python3 /home/kali/ProductionProjectUI/src/app.py -- :0 -nolisten tcp vt1 -keeptty
