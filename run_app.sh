@@ -3,19 +3,14 @@ set -e
 APP="/home/kali/ProductionProjectUI/src/app.py"
 PY="/usr/bin/python3"
 
-# Wait for an existing X server (up to ~20s)
-for i in $(seq 1 40); do
-  if [ -S /tmp/.X11-unix/X0 ]; then
-    DISPLAY_TARGET=":0"; break
-  elif [ -S /tmp/.X11-unix/X1 ]; then
-    DISPLAY_TARGET=":1"; break
-  fi
-  sleep 0.5
-done
-
-# If no display, exit; systemd will retry later
-if [ -z "${DISPLAY_TARGET:-}" ]; then
-  exit 0
+# If X is up, use it; otherwise start it with the app
+if [ -S /tmp/.X11-unix/X0 ]; then
+  DISPLAY_TARGET=":0"
+elif [ -S /tmp/.X11-unix/X1 ]; then
+  DISPLAY_TARGET=":1"
+else
+  [ -f /tmp/.X0-lock ] && rm -f /tmp/.X0-lock
+  exec /usr/bin/startx "$PY" "$APP" -- :0 -nolisten tcp vt1 -keeptty
 fi
 
 export DISPLAY="$DISPLAY_TARGET"
