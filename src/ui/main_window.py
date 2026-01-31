@@ -228,10 +228,10 @@ class MainWindow(ttk.Frame):
 
         # Place buttons individually on the background (no shared container)
         self._add_menu_button(
-            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.1, rely=0.5, width=40, ipady=30
+            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.35, rely=0.5, width=30, ipady=30
         )
         self._add_menu_button(
-            self.content_frame, label="Offensive", command=self._on_offensive, relx=1, rely=0.5, width=40, ipady=30
+            self.content_frame, label="Offensive", command=self._on_offensive, relx=0.65, rely=0.5, width=30, ipady=30
         )
         self._add_menu_button(
             self.content_frame, label="Settings", command=self._on_settings, relx=0.05, rely=0.9, align="w", width=12
