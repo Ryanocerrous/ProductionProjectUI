@@ -6,6 +6,7 @@ Wants=network-online.target getty@tty1.service
 [Service]
 User=kali
 WorkingDirectory=/home/kali/ProductionProjectUI
+Environment=BYTEBITE_DATA_DIR=/home/kali/bytebite-data
 ExecStart=/home/kali/ProductionProjectUI/run_app.sh
 Restart=always
 RestartSec=5

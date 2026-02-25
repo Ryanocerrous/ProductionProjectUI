@@ -15,15 +15,15 @@ from logic.adb import Adb
 from logic.forensic_profile import run_forensic_extraction
 from logic.offensive_profile import run_offensive_capability_profile
 from logic.runlog import RunLogger
+from logic.runtime_paths import build_default_config, load_or_create_config, resolve_config_path, resolve_logs_dir
 
-CONFIG_PATH = PROJECT_ROOT / "config.json"
+CONFIG_PATH = resolve_config_path(PROJECT_ROOT)
+DEFAULT_CONFIG = build_default_config()
 ROOT_ONLY_STEPS = {"root_probe_id", "root_probe_write", "network_snapshot_root"}
 
 
 def _load_config() -> dict[str, Any]:
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(f"Missing config file: {CONFIG_PATH}")
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    return load_or_create_config(CONFIG_PATH, DEFAULT_CONFIG)
 
 
 def _run_stats(run_json_path: Path) -> dict[str, Any]:
@@ -109,8 +109,7 @@ def _run_phase(
 
 def main() -> int:
     cfg = _load_config()
-    logs_dir_cfg = str(cfg.get("paths", {}).get("logs_dir", "logs"))
-    logs_dir = Path(logs_dir_cfg) if Path(logs_dir_cfg).is_absolute() else (PROJECT_ROOT / logs_dir_cfg)
+    logs_dir = resolve_logs_dir(PROJECT_ROOT, cfg)
     logs_dir.mkdir(parents=True, exist_ok=True)
     results_workbook = logs_dir / "results.xlsx"
 

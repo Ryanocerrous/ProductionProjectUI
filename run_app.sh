@@ -2,6 +2,8 @@
 set -e
 APP="/home/kali/ProductionProjectUI/src/app.py"
 PY="/usr/bin/python3"
+export BYTEBITE_DATA_DIR="${BYTEBITE_DATA_DIR:-/home/kali/bytebite-data}"
+mkdir -p "$BYTEBITE_DATA_DIR/logs"
 
 # If X is up, use it; otherwise start it with the app
 if [ -S /tmp/.X11-unix/X0 ]; then

@@ -16,6 +16,11 @@ sudo apt-get install -y python3 python3-tk python3-gpiozero android-sdk-platform
 sudo systemctl enable --now bytebite.service
 systemctl status --no-pager bytebite.service
 ```
+4. Create external runtime data directory and config:
+```bash
+mkdir -p ~/bytebite-data/logs
+cp ~/ProductionProjectUI/config.example.json ~/bytebite-data/config.json
+```
 
 ## 2) Power on and verify GUI-first startup
 1. Turn on the Pi.
@@ -37,14 +42,22 @@ adb devices -l
 You must see at least one device with state `device` (not `unauthorized`).
 
 ## 4) Configure the experiment (`config.json`)
-Main config file: `config.json` at repo root.
+Default config file:
+```bash
+~/bytebite-data/config.json
+```
+
+Optional overrides:
+1. `BYTEBITE_CONFIG` to set an explicit config file path
+2. `BYTEBITE_DATA_DIR` to set a different data root (`<data-root>/config.json`, `<data-root>/logs`)
+3. Legacy `~/ProductionProjectUI/config.json` is auto-migrated to `~/bytebite-data/config.json` on first run
 
 Current defaults:
 ```json
 {
   "device_serial": "",
   "gpio": { "start": 22, "cancel": 27, "view_logs": 17 },
-  "paths": { "logs_dir": "logs" },
+  "paths": { "logs_dir": "~/bytebite-data/logs" },
   "offensive": {
     "marker_dir": "/sdcard/ByteBiteDemo",
     "marker_file": "bytebite_marker.txt",
@@ -83,7 +96,7 @@ Control modes:
 
 Output:
 ```bash
-logs/<RUN_ID>/run.json
+~/bytebite-data/logs/<RUN_ID>/run.json
 ```
 
 ## 6) Run forensic extraction (independent of offensive mode)
@@ -100,8 +113,8 @@ This performs:
 6. Root indicator collection
 
 Outputs:
-1. `logs/<RUN_ID>/run.json`
-2. `logs/<RUN_ID>/forensic_artifacts/` (includes pulled APKs when enabled)
+1. `~/bytebite-data/logs/<RUN_ID>/run.json`
+2. `~/bytebite-data/logs/<RUN_ID>/forensic_artifacts/` (includes pulled APKs when enabled)
 
 ## 7) Run stock-vs-root comparison suite
 ```bash
@@ -118,13 +131,13 @@ Notes:
 2. Shared component is only the ADB transport layer.
 
 Outputs:
-1. `logs/<RUN_ID>-compare/stock/run.json`
-2. `logs/<RUN_ID>-compare/rooted/run.json` (or skipped)
-3. `logs/<RUN_ID>-compare/comparison.json`
+1. `~/bytebite-data/logs/<RUN_ID>-compare/stock/run.json`
+2. `~/bytebite-data/logs/<RUN_ID>-compare/rooted/run.json` (or skipped)
+3. `~/bytebite-data/logs/<RUN_ID>-compare/comparison.json`
 
 ## 8) Generate dissertation-ready results table
 ```bash
-python3 src/logic/results_table.py --logs-dir logs --limit 20 --top 8
+python3 src/logic/results_table.py --limit 20 --top 8
 ```
 
 This prints:
@@ -136,7 +149,7 @@ This prints:
 ## 8b) Excel workbook (single cumulative file)
 Every run appends into one workbook:
 ```bash
-logs/results.xlsx
+~/bytebite-data/logs/results.xlsx
 ```
 
 Sheets:
@@ -147,23 +160,23 @@ Sheets:
 
 Open it from Pi desktop or VS Code file explorer. Optional command:
 ```bash
-xdg-open logs/results.xlsx
+xdg-open ~/bytebite-data/logs/results.xlsx
 ```
 
 Backfill older runs into the workbook:
 ```bash
-python3 src/logic/rebuild_workbook.py --logs-dir logs
+python3 src/logic/rebuild_workbook.py
 ```
 
 ## 9) Recommended full run order (turn on to results)
 1. Power on Pi and wait for GUI.
 2. Connect and authorize Android device (`adb devices -l`).
-3. Confirm/update `config.json`.
+3. Confirm/update `~/bytebite-data/config.json`.
 4. Run `python3 src/ui/offensive_menu.py` and execute offensive run.
 5. Run `python3 src/ui/forensic_runner.py`.
 6. Run `python3 src/ui/compare_runner.py`.
-7. Run `python3 src/logic/results_table.py --logs-dir logs --limit 20 --top 8`.
-8. Archive `logs/` for Chapter 4 evidence.
+7. Run `python3 src/logic/results_table.py --limit 20 --top 8`.
+8. Archive `~/bytebite-data/logs/` for Chapter 4 evidence.
 
 ## Troubleshooting
 1. `wait_for_device failed: command timed out`:

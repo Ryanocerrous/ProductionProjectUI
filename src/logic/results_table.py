@@ -4,8 +4,16 @@ from __future__ import annotations
 import argparse
 import json
 import statistics
+import sys
 from pathlib import Path
 from typing import Any
+
+SRC_DIR = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = SRC_DIR.parent
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+from logic.runtime_paths import default_logs_dir
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -101,12 +109,22 @@ def _print_markdown_summary(runs: list[dict[str, Any]], top: int) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create clean results tables from ByteBite run.json logs.")
-    parser.add_argument("--logs-dir", default="logs", help="Directory containing run folders (default: logs)")
+    parser.add_argument(
+        "--logs-dir",
+        default="",
+        help="Directory containing run folders (default: $BYTEBITE_DATA_DIR/logs or ~/bytebite-data/logs; falls back to ./logs)",
+    )
     parser.add_argument("--limit", type=int, default=20, help="How many latest runs to include (default: 20)")
     parser.add_argument("--top", type=int, default=8, help="How many bottleneck steps to print (default: 8)")
     args = parser.parse_args()
 
-    logs_dir = Path(args.logs_dir)
+    if args.logs_dir.strip():
+        logs_dir = Path(args.logs_dir).expanduser()
+    else:
+        logs_dir = default_logs_dir()
+        legacy_logs = PROJECT_ROOT / "logs"
+        if not logs_dir.exists() and legacy_logs.exists():
+            logs_dir = legacy_logs
     if not logs_dir.exists():
         print(f"Logs directory not found: {logs_dir}")
         return 1

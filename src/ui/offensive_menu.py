@@ -1,5 +1,4 @@
 from __future__ import annotations
-import json
 import select
 import sys
 import threading
@@ -31,31 +30,10 @@ except Exception:
 from logic.adb import Adb
 from logic.runlog import RunLogger
 from logic.offensive_profile import run_controlled_simulation
+from logic.runtime_paths import build_default_config, load_or_create_config, resolve_config_path, resolve_logs_dir
 
-CONFIG_PATH = PROJECT_ROOT / "config.json"
-DEFAULT_CONFIG = {
-    "device_serial": "",
-    "gpio": {"start": 22, "cancel": 27, "view_logs": 17},
-    "paths": {"logs_dir": "logs"},
-    "offensive": {
-        "marker_dir": "/sdcard/ByteBiteDemo",
-        "marker_file": "bytebite_marker.txt",
-        "trace_tag": "ByteBiteDemo",
-        "open_url": "https://example.com",
-        "test_apk_path": "",
-        "test_package": "",
-        "test_activity": "",
-        "collect_network": True,
-    },
-    "forensic": {
-        "logcat_tail": 1000,
-        "target_package": "",
-        "pull_apk": True,
-        "collect_network": True,
-        "root_mode": False,
-    },
-    "comparison": {"run_root_phase": True},
-}
+CONFIG_PATH = resolve_config_path(PROJECT_ROOT)
+DEFAULT_CONFIG = build_default_config()
 
 
 class _PinRef:
@@ -72,23 +50,15 @@ class _NullButton:
         return
 
 
-def _load_config(path: Path) -> dict:
-    if not path.exists() or not path.read_text(encoding="utf-8").strip():
-        path.write_text(json.dumps(DEFAULT_CONFIG, indent=2), encoding="utf-8")
-        return DEFAULT_CONFIG
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 class OffensiveApp:
     def __init__(self):
         if Button is None:
             raise RuntimeError("gpiozero is not installed. Install with: sudo apt install -y python3-gpiozero")
         self._init_gpio_factory()
-        cfg = _load_config(CONFIG_PATH)
+        cfg = load_or_create_config(CONFIG_PATH, DEFAULT_CONFIG)
         self._gpio_available = True
 
-        logs_dir_cfg = str(cfg["paths"]["logs_dir"])
-        self.logs_dir = Path(logs_dir_cfg) if Path(logs_dir_cfg).is_absolute() else (PROJECT_ROOT / logs_dir_cfg)
+        self.logs_dir = resolve_logs_dir(PROJECT_ROOT, cfg)
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.results_workbook = self.logs_dir / "results.xlsx"
 

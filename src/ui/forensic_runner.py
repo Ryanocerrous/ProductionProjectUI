@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,20 +12,19 @@ if str(SRC_DIR) not in sys.path:
 from logic.adb import Adb
 from logic.forensic_profile import run_forensic_extraction
 from logic.runlog import RunLogger
+from logic.runtime_paths import build_default_config, load_or_create_config, resolve_config_path, resolve_logs_dir
 
-CONFIG_PATH = PROJECT_ROOT / "config.json"
+CONFIG_PATH = resolve_config_path(PROJECT_ROOT)
+DEFAULT_CONFIG = build_default_config()
 
 
 def _load_config() -> dict:
-    if not CONFIG_PATH.exists():
-        raise FileNotFoundError(f"Missing config file: {CONFIG_PATH}")
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    return load_or_create_config(CONFIG_PATH, DEFAULT_CONFIG)
 
 
 def main() -> int:
     cfg = _load_config()
-    logs_dir_cfg = str(cfg.get("paths", {}).get("logs_dir", "logs"))
-    logs_dir = Path(logs_dir_cfg) if Path(logs_dir_cfg).is_absolute() else (PROJECT_ROOT / logs_dir_cfg)
+    logs_dir = resolve_logs_dir(PROJECT_ROOT, cfg)
     logs_dir.mkdir(parents=True, exist_ok=True)
     results_workbook = logs_dir / "results.xlsx"
 

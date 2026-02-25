@@ -7,24 +7,36 @@ import sys
 from pathlib import Path
 
 SRC_DIR = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = SRC_DIR.parent
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from logic.results_workbook import append_run_to_workbook
+from logic.runtime_paths import default_logs_dir
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Rebuild logs/results.xlsx from all existing run.json files.")
-    parser.add_argument("--logs-dir", default="logs", help="Logs directory (default: logs)")
+    parser = argparse.ArgumentParser(description="Rebuild results.xlsx from all existing run.json files.")
+    parser.add_argument(
+        "--logs-dir",
+        default="",
+        help="Logs directory (default: $BYTEBITE_DATA_DIR/logs or ~/bytebite-data/logs; falls back to ./logs)",
+    )
     parser.add_argument("--workbook", default="", help="Workbook path (default: <logs-dir>/results.xlsx)")
     args = parser.parse_args()
 
-    logs_dir = Path(args.logs_dir)
+    if args.logs_dir.strip():
+        logs_dir = Path(args.logs_dir).expanduser()
+    else:
+        logs_dir = default_logs_dir()
+        legacy_logs = PROJECT_ROOT / "logs"
+        if not logs_dir.exists() and legacy_logs.exists():
+            logs_dir = legacy_logs
     if not logs_dir.exists():
         print(f"Logs directory not found: {logs_dir}")
         return 1
 
-    workbook = Path(args.workbook) if args.workbook else (logs_dir / "results.xlsx")
+    workbook = Path(args.workbook).expanduser() if args.workbook else (logs_dir / "results.xlsx")
     if workbook.exists():
         workbook.unlink()
 
