@@ -1,0 +1,31 @@
+{
+  "device_serial": "",
+  "gpio": {
+    "start": 22,
+    "cancel": 27,
+    "view_logs": 17
+  },
+  "paths": {
+    "logs_dir": "logs"
+  },
+  "offensive": {
+    "marker_dir": "/sdcard/ByteBiteDemo",
+    "marker_file": "bytebite_marker.txt",
+    "trace_tag": "ByteBiteDemo",
+    "open_url": "https://example.com",
+    "test_apk_path": "",
+    "test_package": "",
+    "test_activity": "",
+    "collect_network": true
+  },
+  "forensic": {
+    "logcat_tail": 1000,
+    "target_package": "",
+    "pull_apk": true,
+    "collect_network": true,
+    "root_mode": false
+  },
+  "comparison": {
+    "run_root_phase": true
+  }
+}

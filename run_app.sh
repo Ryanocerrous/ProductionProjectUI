@@ -10,7 +10,8 @@ elif [ -S /tmp/.X11-unix/X1 ]; then
   DISPLAY_TARGET=":1"
 else
   [ -f /tmp/.X0-lock ] && rm -f /tmp/.X0-lock
-  exec /usr/bin/startx "$PY" "$APP" -- :0 -nolisten tcp vt1 -keeptty
+  # Start a fresh X server on vt7 quietly; logs go to /tmp/xorg-bytebite.log
+  exec /usr/bin/startx "$PY" "$APP" -- :0 -nolisten tcp vt7 -quiet > /tmp/xorg-bytebite.log 2>&1
 fi
 
 export DISPLAY="$DISPLAY_TARGET"

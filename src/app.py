@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - makes it obvious on headless environme
     sys.exit(1)
 
 from ui.main_window import MainWindow
+from buttons import init_buttons, cleanup_buttons
 
 
 def _has_display() -> bool:
@@ -39,7 +40,21 @@ def main() -> None:
     root.geometry("800x480")
     root.minsize(800, 480)
     root.config(cursor="none")  # hide the flashing cursor on the display
-    MainWindow(root)
+    window = MainWindow(root)
+
+    # Wire physical buttons safely (no-op off Pi)
+    init_buttons(
+        root,
+        on_left=window._handle_left,
+        on_right=window._handle_right,
+        on_enter=window._activate_selection,
+    )
+
+    def _on_exit() -> None:
+        cleanup_buttons()
+        root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", _on_exit)
     root.mainloop()
 
 

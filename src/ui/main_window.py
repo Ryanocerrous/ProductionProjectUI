@@ -227,11 +227,13 @@ class MainWindow(ttk.Frame):
             logo_label.place(relx=0.5, rely=0.2, anchor="center")
 
         # Place buttons individually on the background (no shared container)
+        # Keep the two primary actions horizontally aligned with the bottom buttons
+        # but reduce their width so they stay fully on screen on the 800x480 panel.
         self._add_menu_button(
-            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.2, rely=0.5, width=30, ipady=30
+            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.2, rely=0.5, width=20, ipady=24
         )
         self._add_menu_button(
-            self.content_frame, label="Offensive", command=self._on_offensive, relx=0.8, rely=0.5, width=30, ipady=30
+            self.content_frame, label="Offensive", command=self._on_offensive, relx=0.8, rely=0.5, width=20, ipady=24
         )
         self._add_menu_button(
             self.content_frame, label="Settings", command=self._on_settings, relx=0.2, rely=0.9, width=12

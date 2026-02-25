@@ -9,10 +9,8 @@ WorkingDirectory=/home/kali/ProductionProjectUI
 ExecStart=/home/kali/ProductionProjectUI/run_app.sh
 Restart=always
 RestartSec=5
-StandardInput=tty
-TTYPath=/dev/tty1
-TTYReset=yes
-TTYVHangup=yes
+StandardOutput=null
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
