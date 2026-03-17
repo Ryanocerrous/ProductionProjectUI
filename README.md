@@ -57,6 +57,7 @@ Current defaults:
 {
   "device_serial": "",
   "gpio": { "start": 22, "cancel": 27, "view_logs": 17 },
+  "ui_gpio": { "left": 22, "right": 17, "enter": 27 },
   "paths": { "logs_dir": "~/bytebite-data/logs" },
   "offensive": {
     "marker_dir": "/sdcard/ByteBiteDemo",
@@ -78,6 +79,9 @@ Current defaults:
   "comparison": { "run_root_phase": true }
 }
 ```
+
+`gpio` controls `offensive_menu.py` start/cancel/view pins.
+`ui_gpio` controls `src/app.py` navigation pins (left/right/enter).
 
 ## 5) Run offensive simulation
 From repo root:

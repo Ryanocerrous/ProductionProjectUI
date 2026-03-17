@@ -97,6 +97,63 @@ def _style_sheet(ws) -> None:
         ws.column_dimensions[col_cells[0].column_letter].width = min(max(18, max_len + 4), 64)
 
 
+def _rebuild_mode_chart_sheet(runs_ws, ws, mode_key: str, title: str) -> None:
+    ws._charts = []
+    ws.delete_rows(1, ws.max_row)
+    ws.append(["Run Number", "Run ID", "Elapsed (s)"])
+
+    rows: list[tuple[str, float]] = []
+    for row in runs_ws.iter_rows(min_row=2, values_only=True):
+        if row[1] is None:
+            continue
+        mode = str(row[3] or "")
+        status = str(row[6] or "")
+        elapsed_s = _to_float(row[7], -1.0)
+        run_id = str(row[2] or "")
+        if mode == mode_key and status == "success" and elapsed_s >= 0:
+            rows.append((run_id, elapsed_s))
+
+    for idx, (run_id, elapsed_s) in enumerate(rows, start=1):
+        ws.append([idx, run_id, elapsed_s])
+
+    if not rows:
+        ws["E2"] = f"No successful {mode_key} runs yet."
+        _style_sheet(ws)
+        return
+
+    try:
+        from openpyxl.chart import LineChart, Reference
+    except Exception:
+        _style_sheet(ws)
+        return
+
+    data = Reference(ws, min_col=3, min_row=1, max_row=1 + len(rows))
+    cats = Reference(ws, min_col=1, min_row=2, max_row=1 + len(rows))
+    chart = LineChart()
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(cats)
+    chart.title = f"{title} Elapsed Time by Run"
+    chart.y_axis.title = "Elapsed (s)"
+    chart.x_axis.title = "Run Number"
+    chart.legend = None
+
+    if chart.series:
+        series = chart.series[0]
+        try:
+            series.marker.symbol = "circle"
+            series.marker.size = 8
+            series.graphicalProperties.line.noFill = True
+            series.smooth = False
+        except Exception:
+            pass
+
+    chart.height = 10
+    chart.width = 14
+    ws.add_chart(chart, "E2")
+
+    _style_sheet(ws)
+
+
 def _rebuild_summary(runs_ws, steps_ws, summary_ws) -> None:
     run_rows = []
     run_ids: list[str] = []
@@ -255,6 +312,18 @@ def append_run_to_workbook(workbook_path: Path, run_json_path: Path, payload: di
         ],
     )
     summary_ws = _ensure_sheet(wb, "Summary", ["Metric", "Value"])
+    offensive_chart_ws = _ensure_sheet(
+        wb,
+        "Offensive Chart",
+        ["Run Number", "Run ID", "Elapsed (s)"],
+    )
+    forensic_chart_ws = _ensure_sheet(
+        wb,
+        "Forensic Chart",
+        ["Run Number", "Run ID", "Elapsed (s)"],
+    )
+    if "Charts" in wb.sheetnames:
+        del wb["Charts"]
     easy_ws = _ensure_sheet(
         wb,
         "Easy Read",
@@ -329,6 +398,8 @@ def append_run_to_workbook(workbook_path: Path, run_json_path: Path, payload: di
     )
 
     _rebuild_summary(runs_ws, steps_ws, summary_ws)
+    _rebuild_mode_chart_sheet(runs_ws, offensive_chart_ws, mode_key="offensive", title="Offensive")
+    _rebuild_mode_chart_sheet(runs_ws, forensic_chart_ws, mode_key="forensic", title="Forensic")
     _style_sheet(runs_ws)
     _style_sheet(steps_ws)
     _style_sheet(easy_ws)

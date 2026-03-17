@@ -20,22 +20,12 @@ from ui.main_window import MainWindow
 from buttons import init_buttons, cleanup_buttons
 
 
-def _has_display() -> bool:
-    """Determine if a display server is available (useful when SSHing in)."""
-    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-
-
 def main() -> None:
-    if not _has_display():
-        print(
-            "No display detected. If you SSH into the Pi, reconnect with X forwarding:\n"
-            "  ssh -Y pi@<pi-hostname-or-ip>\n"
-            "Then run: python3 src/app.py",
-            file=sys.stderr,
-        )
+    try:
+        root = tk.Tk()
+    except tk.TclError as exc:
+        print(f"Tk init failed: {exc}", file=sys.stderr)
         return
-
-    root = tk.Tk()
     root.title("ByteBite UI")
     root.geometry("800x480")
     root.minsize(800, 480)

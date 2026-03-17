@@ -1,4 +1,7 @@
 """Tkinter-based main window for the ByteBite UI."""
+from pathlib import Path
+import queue
+import threading
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Dict, List, Optional
@@ -20,6 +23,7 @@ except Exception:  # pragma: no cover - optional dependency
     ImageTk = None
 
 from logic import controls
+from logic.forensic_search import ForensicSearchResult, parse_keywords, run_forensic_keyword_search
 from logic.system_info import get_battery_percentage
 
 
@@ -154,6 +158,19 @@ class MainWindow(ttk.Frame):
         self.current_action_command: Optional[Callable[[], None]] = None
         self.splash_after_id: Optional[str] = None
         self.center_frame: Optional[ttk.Frame] = None  # deprecated (kept for cleanup)
+        self.forensic_running = False
+        self.forensic_search_button: Optional[ttk.Button] = None
+        self.forensic_results_text: Optional[tk.Text] = None
+        self.forensic_result_queue: "queue.Queue[tuple[Path, ForensicSearchResult]]" = queue.Queue()
+        self.forensic_options = {
+            "Photos": tk.BooleanVar(value=True),
+            "Video": tk.BooleanVar(value=False),
+            "Documents": tk.BooleanVar(value=False),
+            "Messages": tk.BooleanVar(value=False),
+            "All": tk.BooleanVar(value=False),
+        }
+        self.forensic_keyword_var = tk.StringVar(value="")
+        self.forensic_root_var = tk.StringVar(value=self._default_search_root())
 
         self.battery_var = tk.StringVar(value="Battery: --%")
         self.status_var = tk.StringVar(value="Use Left/Right to navigate. Enter to select.")
@@ -494,18 +511,14 @@ class MainWindow(ttk.Frame):
                 btn.configure(bootstyle="primary" if is_selected else "secondary")
             else:
                 btn.configure(style="Selected.TButton" if is_selected else "Menu.TButton")
+        if self.current_screen == "home":
+            selected = self.menu_items[self.selected_index]["button"].cget("text")
+            self.status_var.set(f"Selected: {selected}. Use Left/Right to navigate. Enter to select.")
 
     # Actions
     def _on_forensic(self) -> None:
-        options = {
-            "Photos": tk.BooleanVar(value=True),
-            "Video": tk.BooleanVar(value=False),
-            "Documents": tk.BooleanVar(value=False),
-            "Messages": tk.BooleanVar(value=False),
-            "All": tk.BooleanVar(value=False),
-        }
-        self.status_var.set("Select forensic targets and press Extract.")
-        self._show_toggle_screen("Forensic", options, "Extract", lambda: self._start_task("Forensic", options))
+        self.status_var.set("Select forensic categories, enter keywords, and press Search.")
+        self._show_forensic_screen()
 
     def _on_offensive(self) -> None:
         options = {
@@ -557,6 +570,217 @@ class MainWindow(ttk.Frame):
             return ImageTk.PhotoImage(img)
         except Exception:
             return None
+
+    def _default_search_root(self) -> str:
+        user_logs = Path.home() / "bytebite-data" / "logs"
+        if user_logs.exists():
+            return str(user_logs)
+        return str((Path(__file__).resolve().parents[2] / "logs"))
+
+    def _show_forensic_screen(self) -> None:
+        self.current_screen = "forensic"
+        self._clear_content()
+        self._set_background()
+
+        self.center_frame = ttk.Frame(self.content_frame, style="Bg.TFrame", padding=0)
+        self.center_frame.place(relx=0.5, rely=0.5, anchor="center")
+        wrapper = ttk.Frame(self.center_frame, style="Bg.TFrame", padding=8)
+        wrapper.grid(row=0, column=0, sticky="n")
+        wrapper.columnconfigure(0, weight=1)
+        wrapper.columnconfigure(1, weight=1)
+
+        heading = ttk.Label(wrapper, text="Forensic Search", font=("Helvetica", 20, "bold"), anchor="center")
+        heading.grid(row=0, column=0, columnspan=2, pady=(0, 6))
+
+        subtitle = ttk.Label(
+            wrapper,
+            text="Search extracted artifacts by keyword. Category toggles strictly control results.",
+            font=("Helvetica", 11),
+            foreground=PALETTE["muted"],
+        )
+        subtitle.grid(row=1, column=0, columnspan=2, pady=(0, 12))
+
+        keyword_lbl = ttk.Label(wrapper, text="Keywords (comma-separated):", font=("Helvetica", 11))
+        keyword_lbl.grid(row=2, column=0, sticky="w", padx=(0, 12))
+        keyword_entry = ttk.Entry(wrapper, textvariable=self.forensic_keyword_var, width=54)
+        keyword_entry.grid(row=2, column=1, sticky="ew")
+        keyword_entry.focus_set()
+
+        path_lbl = ttk.Label(wrapper, text="Search root directory:", font=("Helvetica", 11))
+        path_lbl.grid(row=3, column=0, sticky="w", padx=(0, 12), pady=(8, 0))
+        path_entry = ttk.Entry(wrapper, textvariable=self.forensic_root_var, width=54)
+        path_entry.grid(row=3, column=1, sticky="ew", pady=(8, 0))
+
+        options_frame = ttk.Frame(wrapper, style="Bg.TFrame")
+        options_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 8))
+        for i in range(5):
+            options_frame.columnconfigure(i, weight=1)
+
+        for idx, (label, var) in enumerate(self.forensic_options.items()):
+            item = ttk.Frame(options_frame, style="Bg.TFrame")
+            item.grid(row=0, column=idx, padx=6, sticky="ew")
+            text = ttk.Label(item, text=label, font=("Helvetica", 11))
+            text.grid(row=0, column=0, padx=(0, 4))
+            toggle = ToggleSwitch(item, var=var, width=46, height=24)
+            toggle.grid(row=0, column=1)
+
+        if BOOTSTRAP_ACTIVE:
+            self.forensic_search_button = ttk.Button(
+                wrapper,
+                text="Search",
+                command=self._trigger_forensic_search,
+                takefocus=False,
+                bootstyle="success",
+            )
+        else:
+            self.forensic_search_button = ttk.Button(
+                wrapper,
+                text="Search",
+                command=self._trigger_forensic_search,
+                style="Accent.TButton",
+            )
+        self.forensic_search_button.grid(row=5, column=0, columnspan=2, pady=(6, 10), ipadx=12, ipady=6)
+
+        results_wrap = ttk.Frame(wrapper, style="Bg.TFrame")
+        results_wrap.grid(row=6, column=0, columnspan=2, sticky="nsew")
+        results_wrap.columnconfigure(0, weight=1)
+        results_wrap.rowconfigure(0, weight=1)
+
+        self.forensic_results_text = tk.Text(
+            results_wrap,
+            height=12,
+            width=98,
+            wrap="word",
+            bg=PALETTE["panel"],
+            fg=PALETTE["text"],
+            insertbackground=PALETTE["text"],
+            borderwidth=1,
+            relief="solid",
+        )
+        self.forensic_results_text.grid(row=0, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(results_wrap, orient="vertical", command=self.forensic_results_text.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.forensic_results_text.configure(yscrollcommand=scroll.set)
+        self._set_forensic_results_text("Enter keywords and press Search.")
+
+        back_hint = ttk.Label(
+            wrapper,
+            text="Press Esc to return home.",
+            font=("Helvetica", 11),
+            foreground=PALETTE["muted"],
+        )
+        back_hint.grid(row=7, column=0, columnspan=2, pady=(8, 0))
+        self.current_action_command = self._trigger_forensic_search
+
+    def _trigger_forensic_search(self) -> None:
+        if self.forensic_running:
+            return
+
+        keywords = parse_keywords(self.forensic_keyword_var.get())
+        if not keywords:
+            self.status_var.set("Enter at least one keyword.")
+            self._set_forensic_results_text("No keywords entered. Example: fraud, robbery, meeting")
+            return
+
+        categories = [label.lower() for label, var in self.forensic_options.items() if var.get()]
+        if not categories:
+            self.status_var.set("Select at least one category.")
+            self._set_forensic_results_text("No categories selected.")
+            return
+
+        root = Path(self.forensic_root_var.get().strip() or ".").expanduser()
+        self.forensic_running = True
+        if self.forensic_search_button and self.forensic_search_button.winfo_exists():
+            self.forensic_search_button.state(["disabled"])
+        self.status_var.set(f"Searching forensic artifacts in {root} ...")
+        selected = ", ".join(sorted("all" if c == "all" else c for c in categories))
+        self._set_forensic_results_text(
+            f"Running search...\nRoot: {root}\nCategories: {selected}\nKeywords: {', '.join(keywords)}"
+        )
+        self._drain_forensic_result_queue()
+
+        worker = threading.Thread(
+            target=self._run_forensic_search_worker,
+            args=(root, keywords, categories),
+            daemon=True,
+        )
+        worker.start()
+        self.after(120, self._poll_forensic_search_queue)
+
+    def _run_forensic_search_worker(self, root: Path, keywords: list[str], categories: list[str]) -> None:
+        result = run_forensic_keyword_search(root, keywords, categories)
+        self.forensic_result_queue.put((root, result))
+
+    def _poll_forensic_search_queue(self) -> None:
+        if not self.forensic_running:
+            return
+        try:
+            root, result = self.forensic_result_queue.get_nowait()
+        except queue.Empty:
+            self.after(120, self._poll_forensic_search_queue)
+            return
+        self._complete_forensic_search(root, result)
+
+    def _drain_forensic_result_queue(self) -> None:
+        try:
+            while True:
+                self.forensic_result_queue.get_nowait()
+        except queue.Empty:
+            return
+
+    def _complete_forensic_search(self, root: Path, result: ForensicSearchResult) -> None:
+        self.forensic_running = False
+        if self.forensic_search_button and self.forensic_search_button.winfo_exists():
+            self.forensic_search_button.state(["!disabled"])
+
+        if result.hits:
+            self.status_var.set(
+                f"Forensic search complete: {len(result.hits)} hit(s) across {result.files_scanned} scanned file(s)."
+            )
+        else:
+            self.status_var.set(f"Forensic search complete: no hits across {result.files_scanned} scanned file(s).")
+        self._set_forensic_results_text(self._format_forensic_result(root, result))
+
+    def _format_forensic_result(self, root: Path, result: ForensicSearchResult) -> str:
+        lines = [
+            f"Search root: {root}",
+            f"Categories: {', '.join(result.selected_categories) if result.selected_categories else 'none'}",
+            f"Keywords: {', '.join(result.keywords) if result.keywords else 'none'}",
+            f"Files scanned: {result.files_scanned}",
+            f"Hits: {len(result.hits)}",
+            "",
+        ]
+
+        if not result.hits:
+            lines.append("No keyword matches found.")
+        else:
+            sorted_hits = sorted(
+                result.hits,
+                key=lambda item: (item.category, item.file_path.lower(), item.location.lower(), item.keyword.lower()),
+            )
+            for idx, hit in enumerate(sorted_hits, start=1):
+                lines.append(
+                    f"{idx}. [{hit.category}] keyword='{hit.keyword}' source={hit.source} location={hit.location}"
+                )
+                lines.append(f"   file: {hit.file_path}")
+                lines.append(f"   snippet: {hit.snippet}")
+                lines.append("")
+
+        if result.warnings:
+            lines.append("Warnings:")
+            for warning in result.warnings:
+                lines.append(f"- {warning}")
+
+        return "\n".join(lines).rstrip() + "\n"
+
+    def _set_forensic_results_text(self, text: str) -> None:
+        if not self.forensic_results_text or not self.forensic_results_text.winfo_exists():
+            return
+        self.forensic_results_text.configure(state="normal")
+        self.forensic_results_text.delete("1.0", "end")
+        self.forensic_results_text.insert("1.0", text)
+        self.forensic_results_text.configure(state="disabled")
+        self.forensic_results_text.see("1.0")
 
     def _set_background(self) -> None:
         if not self.bg_img:
