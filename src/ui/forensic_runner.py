@@ -58,6 +58,7 @@ def main() -> int:
             adb=adb,
             logger=logger,
             output_dir=run_dir / "forensic_artifacts",
+            cfg=cfg,
             target_package=target_package,
             pull_apk=pull_apk,
             collect_network=collect_network,

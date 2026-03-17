@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 import subprocess
 from tempfile import TemporaryDirectory
-from typing import Iterable
+from typing import Any, Iterable
 
 try:
     from pypdf import PdfReader
@@ -100,6 +100,16 @@ class ForensicSearchResult:
     warnings: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class ForensicLlmTriage:
+    hit: ForensicHit
+    category: str
+    suspicion_score: int
+    rationale: str
+    raw_output: str
+    error: str = ""
+
+
 def parse_keywords(raw: str) -> list[str]:
     parts = [item.strip() for item in re.split(r"[,\n]+", raw)]
     deduped: list[str] = []
@@ -149,6 +159,60 @@ def run_forensic_keyword_search(root_dir: Path, keywords: list[str], categories:
             result.warnings.append(f"Result limit ({MAX_RESULTS}) reached; refine keywords or scope.")
             break
     return result
+
+
+def triage_hits_with_llm(
+    result: ForensicSearchResult,
+    cfg: dict[str, Any],
+    max_items: int = 5,
+) -> list[ForensicLlmTriage]:
+    """Run local LLM triage on search-hit snippets.
+
+    This is intentionally opt-in and called by higher-level workflows only.
+    """
+    llm_cfg = dict((cfg.get("llm") or {}))
+    if not bool(llm_cfg.get("enabled", False)):
+        return []
+
+    try:
+        from logic.local_llm import classify_text_with_llama
+    except Exception as exc:
+        raise RuntimeError(f"LLM module import failed: {exc}") from exc
+
+    triaged: list[ForensicLlmTriage] = []
+    limit = max(0, int(max_items))
+    for hit in result.hits[:limit]:
+        chunk = (
+            f"Category: {hit.category}\n"
+            f"Keyword: {hit.keyword}\n"
+            f"File: {hit.file_path}\n"
+            f"Location: {hit.location}\n"
+            f"Source: {hit.source}\n"
+            f"Snippet: {hit.snippet}\n"
+        )
+        try:
+            cls = classify_text_with_llama(chunk, cfg)
+            triaged.append(
+                ForensicLlmTriage(
+                    hit=hit,
+                    category=cls.category,
+                    suspicion_score=cls.suspicion_score,
+                    rationale=cls.rationale,
+                    raw_output=cls.raw_output,
+                )
+            )
+        except Exception as exc:
+            triaged.append(
+                ForensicLlmTriage(
+                    hit=hit,
+                    category="unknown",
+                    suspicion_score=0,
+                    rationale="",
+                    raw_output="",
+                    error=str(exc),
+                )
+            )
+    return triaged
 
 
 def _normalize_categories(categories: Iterable[str]) -> set[str]:

@@ -92,6 +92,7 @@ def _run_phase(
             adb=adb,
             logger=logger,
             output_dir=phase_dir / "forensic_artifacts",
+            cfg=cfg,
             target_package=str(for_cfg.get("target_package", "") or ""),
             pull_apk=bool(for_cfg.get("pull_apk", True)),
             collect_network=bool(for_cfg.get("collect_network", True)),

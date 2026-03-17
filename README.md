@@ -1,198 +1,264 @@
-# ProductionProjectUI
-ByteBite UI + controlled offensive/forensic experiment workflow for Raspberry Pi.
+# ProductionProjectUI (ByteBite) - Device Manual
 
-## 1) One-time setup on the Pi
-1. Clone/copy this repo to:
+ByteBite is a Raspberry Pi forensic workflow device with:
+1. A physical-button UI (`left`, `right`, `enter`).
+2. Android evidence collection through ADB.
+3. Post-extraction analysis with rule-based + optional LLM triage.
+4. Investigator-ready outputs (CSV + Excel + narrative summary).
+
+## 1. What The Device Does
+
+ByteBite supports three core workflows:
+1. **Forensic extraction** from a connected Android device.
+2. **Forensic post-analysis** of extracted artefacts (including data on external USB storage).
+3. **Comparison runs** (stock vs rooted) for capability testing.
+
+After extraction, ByteBite can automatically:
+1. Classify artefacts as `safe`, `suspicious`, or `high_priority`.
+2. Sort artefacts into triage folders.
+3. Build a readable timeline from filesystem times, EXIF dates, and log/message timestamps.
+4. Generate an LLM-authored narrative findings summary (when LLM is enabled).
+5. Build an `investigator_report.xlsx` workbook.
+
+## 2. Hardware And Wiring
+
+Raspberry Pi GPIO navigation buttons (BCM):
+1. `left` = GPIO 22
+2. `enter` = GPIO 27
+3. `right` = GPIO 17
+
+Use module wiring that provides valid HIGH/LOW transitions on press (your tested setup uses 3.3V/VCC + OUT correctly).
+
+## 3. One-Time Software Setup (Pi)
+
+Clone/copy repo to:
 ```bash
 /home/kali/ProductionProjectUI
 ```
-2. Install base runtime:
+
+Install runtime dependencies:
 ```bash
 sudo apt-get update
 sudo apt-get install -y python3 python3-tk python3-gpiozero android-sdk-platform-tools python3-openpyxl
 ```
-3. Ensure GUI-first boot service is enabled:
-```bash
-sudo systemctl enable --now bytebite.service
-systemctl status --no-pager bytebite.service
-```
-4. Create external runtime data directory and config:
+
+Prepare data/config:
 ```bash
 mkdir -p ~/bytebite-data/logs
 cp ~/ProductionProjectUI/config.example.json ~/bytebite-data/config.json
 ```
 
-## 2) Power on and verify GUI-first startup
-1. Turn on the Pi.
-2. Wait for the main ByteBite GUI (`src/app.py`) to appear.
-3. Optional remote check:
+Enable startup service:
 ```bash
-ssh bytebite
-systemctl status --no-pager bytebite.service
+sudo systemctl enable --now bytebite.service
+sudo systemctl status --no-pager bytebite.service
 ```
 
-## 3) Connect the Android test device
-1. Connect phone via USB.
-2. Enable Android Developer Options + USB debugging.
-3. Accept the RSA trust prompt on the phone.
-4. Verify ADB:
+## 4. Startup And Daily Use
+
+1. Power on device.
+2. Wait for ByteBite UI to appear.
+3. Connect Android phone via USB.
+4. Confirm USB debugging authorized:
 ```bash
 adb devices -l
 ```
-You must see at least one device with state `device` (not `unauthorized`).
+5. Navigate home UI using physical `left/right/enter` buttons.
 
-## 4) Configure the experiment (`config.json`)
-Default config file:
+## 5. Configuration (Important)
+
+Primary config:
 ```bash
 ~/bytebite-data/config.json
 ```
 
-Optional overrides:
-1. `BYTEBITE_CONFIG` to set an explicit config file path
-2. `BYTEBITE_DATA_DIR` to set a different data root (`<data-root>/config.json`, `<data-root>/logs`)
-3. Legacy `~/ProductionProjectUI/config.json` is auto-migrated to `~/bytebite-data/config.json` on first run
+Environment overrides:
+1. `BYTEBITE_CONFIG` for explicit config file path.
+2. `BYTEBITE_DATA_DIR` for data root (`<root>/config.json`, `<root>/logs`).
 
-Current defaults:
-```json
-{
-  "device_serial": "",
-  "gpio": { "start": 22, "cancel": 27, "view_logs": 17 },
-  "ui_gpio": { "left": 22, "right": 17, "enter": 27 },
-  "paths": { "logs_dir": "~/bytebite-data/logs" },
-  "offensive": {
-    "marker_dir": "/sdcard/ByteBiteDemo",
-    "marker_file": "bytebite_marker.txt",
-    "trace_tag": "ByteBiteDemo",
-    "open_url": "https://example.com",
-    "test_apk_path": "",
-    "test_package": "",
-    "test_activity": "",
-    "collect_network": true
-  },
-  "forensic": {
-    "logcat_tail": 1000,
-    "target_package": "",
-    "pull_apk": true,
-    "collect_network": true,
-    "root_mode": false
-  },
-  "comparison": { "run_root_phase": true }
-}
-```
+Key sections:
+1. `ui_gpio`: home UI button pins.
+2. `forensic`: extraction behaviour.
+3. `forensic_analysis`: triage/timeline/report behaviour.
+4. `llm`: local llama.cpp integration.
 
-`gpio` controls `offensive_menu.py` start/cancel/view pins.
-`ui_gpio` controls `src/app.py` navigation pins (left/right/enter).
+## 6. Forensic Extraction Workflow
 
-## 5) Run offensive simulation
-From repo root:
+Run:
 ```bash
-python3 src/ui/offensive_menu.py
-```
-
-Control modes:
-1. Physical GPIO available:
-   - `Start` button runs offensive profile
-   - `Cancel` requests stop after current step
-   - `View Logs` prints latest run summary
-2. GPIO backend unavailable:
-   - App enters terminal control mode
-   - Type: `start`, `cancel`, `view`, `quit`
-
-Output:
-```bash
-~/bytebite-data/logs/<RUN_ID>/run.json
-```
-
-## 6) Run forensic extraction (independent of offensive mode)
-```bash
+cd ~/ProductionProjectUI
 python3 src/ui/forensic_runner.py
 ```
 
-This performs:
-1. Device readiness checks via ADB
-2. Log collection
-3. Package listing
-4. Optional APK path/hash/pull (if `forensic.target_package` is set)
-5. Optional network snapshot
-6. Root indicator collection
+Extraction stage performs:
+1. Device readiness checks.
+2. Logcat collection.
+3. Package listing.
+4. Optional APK path/hash/pull.
+5. Optional network snapshot.
+6. Root status collection.
 
-Outputs:
-1. `~/bytebite-data/logs/<RUN_ID>/run.json`
-2. `~/bytebite-data/logs/<RUN_ID>/forensic_artifacts/` (includes pulled APKs when enabled)
+Post-extraction analysis then runs automatically (if enabled).
 
-## 7) Run stock-vs-root comparison suite
+## 7. Post-Extraction Analysis Workflow
+
+### 7.1 Automatic (during forensic run)
+Automatically runs at end of extraction via `run_forensic_extraction(...)`.
+
+### 7.2 Manual (for existing USB extraction folders)
 ```bash
+cd ~/ProductionProjectUI
+python3 scripts/forensic_post_analysis.py --source /media/kali/YOUR_USB/case_folder
+```
+
+## 8. Analysis Outputs (Readable Investigator Format)
+
+Given source folder:
+```bash
+.../forensic_artifacts
+```
+ByteBite writes:
+```text
+.../forensic_artifacts/analysis/
+  analysis_summary.json
+  llm_findings_summary.txt
+  llm_findings_summary.md
+  investigator_report.xlsx
+  triage/
+    safe/
+    suspicious/
+    high_priority/
+    triage_manifest.csv
+    triage_manifest.json
+    triage_manifest.xlsx
+  timeline/
+    timeline.csv
+    timeline.json
+    timeline.xlsx
+```
+
+## 9. LLM Integration
+
+Set in `config.json`:
+```json
+"llm": {
+  "enabled": true,
+  "binary": "~/llama.cpp/build/bin/llama-cli",
+  "model": "~/llama.cpp/models/Llama-3.2-3B-Instruct-Q4_K_M.gguf",
+  "temperature": 0.2,
+  "context_tokens": 256,
+  "max_tokens": 256,
+  "threads": 2,
+  "gpu_layers": 0,
+  "timeout_s": 120
+}
+```
+
+Notes:
+1. If LLM is disabled or fails, ByteBite still triages using rule keywords.
+2. LLM outputs are used for:
+   1. Per-artefact classification assistance.
+   2. Narrative findings summary (`llm_findings_summary.*`).
+
+## 10. Triage Logic (Safe / Suspicious / High Priority)
+
+ByteBite uses:
+1. Rule-based keyword scoring (`high_priority_keywords`, `suspicious_keywords`).
+2. Optional LLM classification.
+3. Final label uses the higher-severity of rule and LLM result.
+
+Defaults include terms such as:
+1. High-priority: `murder`, `kill`, `knife`, `gun`, `firearm`, `bomb`, `kidnap`, `ransom`.
+2. Suspicious: `burner`, `encrypted`, `vault`, `wipe`, `delete`, `crypto`, `drugs`, `weapon`, `hide`.
+
+You can edit these lists in `forensic_analysis`.
+
+## 11. Timeline Summary
+
+Timeline currently extracts:
+1. Filesystem timestamps (`mtime`, `ctime`).
+2. EXIF image timestamps (where available).
+3. Text/log timestamps:
+   1. ISO datetime forms
+   2. Simple datetime forms
+   3. Logcat-style timestamps
+   4. Epoch-like timestamps
+
+Output is sorted chronologically and exported to CSV/Excel.
+
+## 12. Comparison Workflow (Stock vs Rooted)
+
+Run:
+```bash
+cd ~/ProductionProjectUI
 python3 src/ui/compare_runner.py
 ```
 
-This runs:
-1. Stock phase (`root_mode=false`)
-2. Rooted phase (`root_mode=true`) if `su` is available and `comparison.run_root_phase=true`
-3. Delta calculation across phases
-
-Notes:
-1. Offensive and forensic modules are logically separate.
-2. Shared component is only the ADB transport layer.
-
 Outputs:
-1. `~/bytebite-data/logs/<RUN_ID>-compare/stock/run.json`
-2. `~/bytebite-data/logs/<RUN_ID>-compare/rooted/run.json` (or skipped)
-3. `~/bytebite-data/logs/<RUN_ID>-compare/comparison.json`
+1. `.../<RUN_ID>-compare/stock/run.json`
+2. `.../<RUN_ID>-compare/rooted/run.json` (or skipped)
+3. `.../<RUN_ID>-compare/comparison.json`
 
-## 8) Generate dissertation-ready results table
+Each phase includes forensic extraction and post-analysis outputs.
+
+## 13. Home UI Controls
+
+1. `left`: move selection left.
+2. `right`: move selection right.
+3. `enter`: activate selected action.
+
+If buttons stop responding:
+1. Check service is running.
+2. Verify pin config and wiring.
+3. Confirm GPIO backend availability in logs.
+
+## 14. Service Commands
+
 ```bash
-python3 src/logic/results_table.py --limit 20 --top 8
+sudo systemctl restart bytebite.service
+sudo systemctl status --no-pager bytebite.service
+sudo journalctl -u bytebite.service -n 120 --no-pager
 ```
 
-This prints:
-1. Run count
-2. Success rate
-3. Mean/median duration
-4. Step bottlenecks by mean duration
+## 15. Troubleshooting
 
-## 8b) Excel workbook (single cumulative file)
-Every run appends into one workbook:
+1. `adb wait-for-device` timeout:
+   1. Reconnect USB.
+   2. Re-authorize RSA prompt on phone.
+   3. Re-check `adb devices -l`.
+2. LLM memory errors (`failed to allocate`):
+   1. Use a smaller GGUF.
+   2. Lower `context_tokens` and `max_tokens`.
+3. `forensic_post_analysis.py` says source missing:
+   1. Check USB mount path (`/media/kali/...`).
+4. No Excel outputs:
+   1. Install `python3-openpyxl`.
+
+## 16. Project File Guide
+
+1. `src/app.py`: GUI entry point.
+2. `src/buttons.py`: GPIO button backend.
+3. `src/ui/main_window.py`: home UI and screens.
+4. `src/ui/forensic_runner.py`: forensic extraction runner.
+5. `src/ui/compare_runner.py`: stock vs rooted runner.
+6. `src/logic/adb.py`: ADB wrapper.
+7. `src/logic/forensic_profile.py`: extraction workflow orchestration.
+8. `src/logic/forensic_analysis.py`: triage + timeline + report generation.
+9. `src/logic/local_llm.py`: llama.cpp subprocess integration.
+10. `scripts/forensic_post_analysis.py`: manual analysis on existing extraction folder.
+
+## 17. Recommended Investigator Run Sequence
+
+1. Boot device and verify UI.
+2. Connect Android and verify `adb devices -l`.
+3. Run forensic extraction:
 ```bash
-~/bytebite-data/logs/results.xlsx
+python3 src/ui/forensic_runner.py
 ```
+4. Open analysis folder (`.../forensic_artifacts/analysis/`).
+5. Review:
+   1. `investigator_report.xlsx`
+   2. `llm_findings_summary.md`
+   3. `triage/high_priority/`
+   4. `timeline/timeline.csv`
 
-Sheets:
-1. `Easy Read` (plain-language run overview for non-technical users)
-2. `Summary` (auto-updated rollup + bottlenecks)
-3. `Runs` (technical one row per run)
-4. `Steps` (technical one row per step)
-
-Open it from Pi desktop or VS Code file explorer. Optional command:
-```bash
-xdg-open ~/bytebite-data/logs/results.xlsx
-```
-
-Backfill older runs into the workbook:
-```bash
-python3 src/logic/rebuild_workbook.py
-```
-
-## 9) Recommended full run order (turn on to results)
-1. Power on Pi and wait for GUI.
-2. Connect and authorize Android device (`adb devices -l`).
-3. Confirm/update `~/bytebite-data/config.json`.
-4. Run `python3 src/ui/offensive_menu.py` and execute offensive run.
-5. Run `python3 src/ui/forensic_runner.py`.
-6. Run `python3 src/ui/compare_runner.py`.
-7. Run `python3 src/logic/results_table.py --limit 20 --top 8`.
-8. Archive `~/bytebite-data/logs/` for Chapter 4 evidence.
-
-## Troubleshooting
-1. `wait_for_device failed: command timed out`:
-   - Device not connected/authorized. Re-check USB, debugging, RSA prompt, and `adb devices -l`.
-2. `GPIO init failed ...`:
-   - Current Kali image may lack a working GPIO backend. Use terminal mode controls (`start/cancel/view/quit`) or switch to a Pi image with supported GPIO stack.
-3. `No display detected`:
-   - If remote: reconnect with X forwarding (`ssh -Y ...`) or use attached Pi display.
-
-## Project layout
-1. `src/app.py` – GUI entry point.
-2. `src/ui/offensive_menu.py` – offensive runner controller (GPIO/terminal mode).
-3. `src/ui/forensic_runner.py` – independent forensic extraction runner.
-4. `src/ui/compare_runner.py` – stock-vs-root differential suite runner.
-5. `src/logic/` – ADB wrapper, offensive/forensic profiles, logging, results table script.

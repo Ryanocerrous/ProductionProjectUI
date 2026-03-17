@@ -29,6 +29,7 @@ def main() -> None:
     root.title("ByteBite UI")
     root.geometry("800x480")
     root.minsize(800, 480)
+    root.attributes("-fullscreen", True)
     root.config(cursor="none")  # hide the flashing cursor on the display
     window = MainWindow(root)
 

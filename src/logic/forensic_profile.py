@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from logic.adb import Adb, CommandResult
+from logic.forensic_analysis import run_post_extraction_analysis
 from logic.runlog import RunLogger
 
 
@@ -124,6 +125,7 @@ def run_forensic_extraction(
     adb: Adb,
     logger: RunLogger,
     output_dir: Path,
+    cfg: dict[str, Any] | None = None,
     target_package: str = "",
     pull_apk: bool = True,
     collect_network: bool = True,
@@ -184,3 +186,22 @@ def run_forensic_extraction(
     if cancel_flag():
         return
     _run_step(logger, "root_status", adb.root_status)
+
+    analysis_cfg = dict(((cfg or {}).get("forensic_analysis") or {}))
+    if bool(analysis_cfg.get("enabled", True)):
+        started = logger.begin_step("post_extraction_analysis")
+        try:
+            summary = run_post_extraction_analysis(source_dir=output_dir, cfg=(cfg or {}))
+            logger.end_step(
+                name="post_extraction_analysis",
+                started_perf=started,
+                ok=True,
+                details=summary,
+            )
+        except Exception as exc:
+            logger.end_step(
+                name="post_extraction_analysis",
+                started_perf=started,
+                ok=False,
+                error=f"post extraction analysis failed: {exc}",
+            )
