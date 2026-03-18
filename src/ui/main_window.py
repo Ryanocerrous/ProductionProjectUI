@@ -23,7 +23,8 @@ except Exception:  # pragma: no cover - optional dependency
     ImageTk = None
 
 from logic import controls
-from logic.forensic_search import ForensicSearchResult, parse_keywords, run_forensic_keyword_search
+from logic.forensic_search import ForensicSearchResult, run_forensic_keyword_search
+from logic.runtime_paths import build_default_config, load_or_create_config, resolve_config_path
 from logic.system_info import get_battery_percentage
 
 
@@ -38,6 +39,26 @@ PALETTE = {
     "hover": "#232a35",
 }
 BOOTSTRAP_ACTIVE = False
+DEFAULT_AUTO_FORENSIC_KEYWORDS = [
+    "murder",
+    "kill",
+    "knife",
+    "gun",
+    "firearm",
+    "bomb",
+    "explosive",
+    "kidnap",
+    "ransom",
+    "burner",
+    "encrypted",
+    "vault",
+    "wipe",
+    "delete",
+    "crypto",
+    "drugs",
+    "weapon",
+    "hide",
+]
 
 
 def _configure_style(master: tk.Tk) -> None:
@@ -169,8 +190,7 @@ class MainWindow(ttk.Frame):
             "Messages": tk.BooleanVar(value=False),
             "All": tk.BooleanVar(value=False),
         }
-        self.forensic_keyword_var = tk.StringVar(value="")
-        self.forensic_root_var = tk.StringVar(value=self._default_search_root())
+        self.auto_forensic_keywords = self._load_auto_forensic_keywords()
 
         self.battery_var = tk.StringVar(value="Battery: --%")
         self.status_var = tk.StringVar(value="Use Left/Right to navigate. Enter to select.")
@@ -337,7 +357,7 @@ class MainWindow(ttk.Frame):
 
         subtitle = ttk.Label(
             wrapper,
-            text="Toggle targets and press Enter on the action button below.",
+            text="Use Right to move, Enter to toggle or execute, Left to go back.",
             font=("Helvetica", 11),
             foreground=PALETTE["muted"],
         )
@@ -356,6 +376,7 @@ class MainWindow(ttk.Frame):
             lbl.grid(row=0, column=0, sticky="w")
             toggle = ToggleSwitch(line, var=var)
             toggle.grid(row=0, column=1, sticky="e")
+            self.menu_items.append({"type": "toggle", "name": label, "var": var, "label": lbl, "toggle": toggle})
             row += 1
 
         if BOOTSTRAP_ACTIVE:
@@ -369,15 +390,18 @@ class MainWindow(ttk.Frame):
                 style="Accent.TButton",
             )
         action_btn.grid(row=3, column=0, pady=(10, 0), ipadx=12, ipady=8, sticky="n")
+        self.menu_items.append({"type": "action", "name": action_label, "button": action_btn, "command": action_command})
         self.current_action_command = action_command
 
         back_hint = ttk.Label(
             wrapper,
-            text="Press Esc or Enter on action to return home.",
+            text="Left = Back  |  Right = Move  |  Enter = Toggle/Execute",
             font=("Helvetica", 11),
             foreground=PALETTE["muted"],
         )
         back_hint.grid(row=4, column=0, pady=(12, 0))
+        self.selected_index = 0
+        self._update_selection()
 
     def _show_progress_screen(self, title: str, on_cancel: Callable[[], None]) -> None:
         self.current_screen = f"{title.lower()}_progress"
@@ -455,7 +479,7 @@ class MainWindow(ttk.Frame):
             btn.place(x=x, y=y, anchor=anchor)
         else:
             btn.grid(row=row or 0, column=col or 0, padx=22, pady=16, sticky=sticky or "nsew", ipady=ipady or 16)
-        self.menu_items.append({"button": btn, "command": command})
+        self.menu_items.append({"type": "button", "name": label, "button": btn, "command": command})
 
     # Navigation
     def _bind_keys(self, master: tk.Tk) -> None:
@@ -473,7 +497,7 @@ class MainWindow(ttk.Frame):
 
     def _handle_right(self) -> None:
         if self.current_screen != "home":
-            self._show_home()
+            self._move_selection(1)
             return
         self._move_selection(1)
 
@@ -487,15 +511,21 @@ class MainWindow(ttk.Frame):
         if self.current_screen == "splash":
             self._show_home()
             return
-        if self.current_screen != "home":
-            if self.current_action_command:
+        if not self.menu_items:
+            if self.current_screen != "home" and self.current_action_command:
                 self.current_action_command()
-            else:
+                return
+            if self.current_screen != "home":
                 self._show_home()
             return
-        if not self.menu_items:
-            return
         item = self.menu_items[self.selected_index]
+        item_type = str(item.get("type", "button"))
+        if item_type == "toggle":
+            var = item.get("var")
+            if isinstance(var, tk.BooleanVar):
+                var.set(not var.get())
+                self._update_selection()
+            return
         command = item.get("command")
         if callable(command):
             command()
@@ -504,20 +534,48 @@ class MainWindow(ttk.Frame):
         if not self.menu_items:
             return
         for idx, item in enumerate(self.menu_items):
-            btn: ttk.Button = item["button"]
             is_selected = idx == self.selected_index
-            btn.state(["!disabled"])
-            if BOOTSTRAP_ACTIVE:
-                btn.configure(bootstyle="primary" if is_selected else "secondary")
-            else:
-                btn.configure(style="Selected.TButton" if is_selected else "Menu.TButton")
+            item_type = str(item.get("type", "button"))
+            if item_type in {"button", "action"}:
+                btn = item.get("button")
+                if not isinstance(btn, ttk.Button):
+                    continue
+                btn.state(["!disabled"])
+                if self.current_screen == "home":
+                    if BOOTSTRAP_ACTIVE:
+                        btn.configure(bootstyle="primary" if is_selected else "secondary")
+                    else:
+                        btn.configure(style="Selected.TButton" if is_selected else "Menu.TButton")
+                else:
+                    if BOOTSTRAP_ACTIVE:
+                        btn.configure(bootstyle="success" if is_selected else "secondary")
+                    else:
+                        btn.configure(style="Selected.TButton" if is_selected else "Accent.TButton")
+                continue
+
+            if item_type == "toggle":
+                lbl = item.get("label")
+                name = str(item.get("name", "Option"))
+                var = item.get("var")
+                if isinstance(lbl, ttk.Label):
+                    marker = ">" if is_selected else " "
+                    state = "ON" if isinstance(var, tk.BooleanVar) and var.get() else "OFF"
+                    lbl.configure(
+                        text=f"{marker} {name} [{state}]",
+                        foreground=PALETTE["accent"] if is_selected else PALETTE["text"],
+                    )
+                continue
+
         if self.current_screen == "home":
-            selected = self.menu_items[self.selected_index]["button"].cget("text")
+            selected = str(self.menu_items[self.selected_index].get("name", "Option"))
             self.status_var.set(f"Selected: {selected}. Use Left/Right to navigate. Enter to select.")
+            return
+        selected = str(self.menu_items[self.selected_index].get("name", "Option"))
+        self.status_var.set(f"Selected: {selected}. Left=Back, Right=Move, Enter=Toggle/Execute.")
 
     # Actions
     def _on_forensic(self) -> None:
-        self.status_var.set("Select forensic categories, enter keywords, and press Search.")
+        self.status_var.set("Forensic: Left=Back, Right=Move, Enter=Toggle/Execute.")
         self._show_forensic_screen()
 
     def _on_offensive(self) -> None:
@@ -526,7 +584,7 @@ class MainWindow(ttk.Frame):
             "Malware injection": tk.BooleanVar(value=False),
             "Network scan": tk.BooleanVar(value=False),
         }
-        self.status_var.set("Select offensive tools and press Launch.")
+        self.status_var.set("Offensive: Left=Back, Right=Move, Enter=Toggle/Execute.")
         self._show_toggle_screen("Offensive", options, "Launch", lambda: self._start_task("Offensive", options))
 
     def _on_settings(self) -> None:
@@ -535,7 +593,7 @@ class MainWindow(ttk.Frame):
             "Sound alerts": self.settings_state["sound_alerts"],
             "Auto-refresh": self.settings_state["auto_refresh"],
         }
-        self.status_var.set("Toggle settings and press Apply.")
+        self.status_var.set("Settings: Left=Back, Right=Move, Enter=Toggle/Execute.")
         self._show_toggle_screen("Settings", options, "Apply", self._apply_settings)
 
     def _on_about(self) -> None:
@@ -577,6 +635,28 @@ class MainWindow(ttk.Frame):
             return str(user_logs)
         return str((Path(__file__).resolve().parents[2] / "logs"))
 
+    def _load_auto_forensic_keywords(self) -> list[str]:
+        try:
+            project_root = Path(__file__).resolve().parents[2]
+            cfg_path = resolve_config_path(project_root)
+            cfg = load_or_create_config(cfg_path, build_default_config())
+            analysis_cfg = dict((cfg.get("forensic_analysis") or {}))
+            seen: set[str] = set()
+            merged: list[str] = []
+            for key in ("high_priority_keywords", "suspicious_keywords"):
+                values = analysis_cfg.get(key) or []
+                for value in values:
+                    token = str(value).strip().lower()
+                    if not token or token in seen:
+                        continue
+                    seen.add(token)
+                    merged.append(token)
+            if merged:
+                return merged
+        except Exception:
+            pass
+        return list(DEFAULT_AUTO_FORENSIC_KEYWORDS)
+
     def _show_forensic_screen(self) -> None:
         self.current_screen = "forensic"
         self._clear_content()
@@ -594,25 +674,14 @@ class MainWindow(ttk.Frame):
 
         subtitle = ttk.Label(
             wrapper,
-            text="Search extracted artifacts by keyword. Category toggles strictly control results.",
+            text="Use category toggles, then Execute. Keywords/root are automatic for button-only navigation.",
             font=("Helvetica", 11),
             foreground=PALETTE["muted"],
         )
         subtitle.grid(row=1, column=0, columnspan=2, pady=(0, 12))
 
-        keyword_lbl = ttk.Label(wrapper, text="Keywords (comma-separated):", font=("Helvetica", 11))
-        keyword_lbl.grid(row=2, column=0, sticky="w", padx=(0, 12))
-        keyword_entry = ttk.Entry(wrapper, textvariable=self.forensic_keyword_var, width=54)
-        keyword_entry.grid(row=2, column=1, sticky="ew")
-        keyword_entry.focus_set()
-
-        path_lbl = ttk.Label(wrapper, text="Search root directory:", font=("Helvetica", 11))
-        path_lbl.grid(row=3, column=0, sticky="w", padx=(0, 12), pady=(8, 0))
-        path_entry = ttk.Entry(wrapper, textvariable=self.forensic_root_var, width=54)
-        path_entry.grid(row=3, column=1, sticky="ew", pady=(8, 0))
-
         options_frame = ttk.Frame(wrapper, style="Bg.TFrame")
-        options_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(10, 8))
+        options_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 8))
         for i in range(5):
             options_frame.columnconfigure(i, weight=1)
 
@@ -623,11 +692,12 @@ class MainWindow(ttk.Frame):
             text.grid(row=0, column=0, padx=(0, 4))
             toggle = ToggleSwitch(item, var=var, width=46, height=24)
             toggle.grid(row=0, column=1)
+            self.menu_items.append({"type": "toggle", "name": label, "var": var, "label": text, "toggle": toggle})
 
         if BOOTSTRAP_ACTIVE:
             self.forensic_search_button = ttk.Button(
                 wrapper,
-                text="Search",
+                text="Execute",
                 command=self._trigger_forensic_search,
                 takefocus=False,
                 bootstyle="success",
@@ -635,14 +705,22 @@ class MainWindow(ttk.Frame):
         else:
             self.forensic_search_button = ttk.Button(
                 wrapper,
-                text="Search",
+                text="Execute",
                 command=self._trigger_forensic_search,
                 style="Accent.TButton",
             )
-        self.forensic_search_button.grid(row=5, column=0, columnspan=2, pady=(6, 10), ipadx=12, ipady=6)
+        self.forensic_search_button.grid(row=3, column=0, columnspan=2, pady=(6, 10), ipadx=12, ipady=6)
+        self.menu_items.append(
+            {
+                "type": "action",
+                "name": "Execute",
+                "button": self.forensic_search_button,
+                "command": self._trigger_forensic_search,
+            }
+        )
 
         results_wrap = ttk.Frame(wrapper, style="Bg.TFrame")
-        results_wrap.grid(row=6, column=0, columnspan=2, sticky="nsew")
+        results_wrap.grid(row=4, column=0, columnspan=2, sticky="nsew")
         results_wrap.columnconfigure(0, weight=1)
         results_wrap.rowconfigure(0, weight=1)
 
@@ -661,25 +739,27 @@ class MainWindow(ttk.Frame):
         scroll = ttk.Scrollbar(results_wrap, orient="vertical", command=self.forensic_results_text.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         self.forensic_results_text.configure(yscrollcommand=scroll.set)
-        self._set_forensic_results_text("Enter keywords and press Search.")
+        auto_keywords = ", ".join(self.auto_forensic_keywords[:8]) + ", ..."
+        self._set_forensic_results_text(
+            "Ready.\n"
+            f"Search root (auto): {Path(self._default_search_root()).expanduser()}\n"
+            f"Keyword profile (auto): {auto_keywords}\n"
+            "Use Right to move, Enter to toggle/execute, Left to go back."
+        )
 
         back_hint = ttk.Label(
             wrapper,
-            text="Press Esc to return home.",
+            text="Left = Back  |  Right = Move  |  Enter = Toggle/Execute",
             font=("Helvetica", 11),
             foreground=PALETTE["muted"],
         )
-        back_hint.grid(row=7, column=0, columnspan=2, pady=(8, 0))
+        back_hint.grid(row=5, column=0, columnspan=2, pady=(8, 0))
         self.current_action_command = self._trigger_forensic_search
+        self.selected_index = 0
+        self._update_selection()
 
     def _trigger_forensic_search(self) -> None:
         if self.forensic_running:
-            return
-
-        keywords = parse_keywords(self.forensic_keyword_var.get())
-        if not keywords:
-            self.status_var.set("Enter at least one keyword.")
-            self._set_forensic_results_text("No keywords entered. Example: fraud, robbery, meeting")
             return
 
         categories = [label.lower() for label, var in self.forensic_options.items() if var.get()]
@@ -688,14 +768,15 @@ class MainWindow(ttk.Frame):
             self._set_forensic_results_text("No categories selected.")
             return
 
-        root = Path(self.forensic_root_var.get().strip() or ".").expanduser()
+        root = Path(self._default_search_root()).expanduser()
+        keywords = list(self.auto_forensic_keywords)
         self.forensic_running = True
         if self.forensic_search_button and self.forensic_search_button.winfo_exists():
             self.forensic_search_button.state(["disabled"])
         self.status_var.set(f"Searching forensic artifacts in {root} ...")
         selected = ", ".join(sorted("all" if c == "all" else c for c in categories))
         self._set_forensic_results_text(
-            f"Running search...\nRoot: {root}\nCategories: {selected}\nKeywords: {', '.join(keywords)}"
+            f"Running search...\nRoot: {root}\nCategories: {selected}\nKeyword profile: {', '.join(keywords)}"
         )
         self._drain_forensic_result_queue()
 
