@@ -246,6 +246,8 @@ sudo journalctl -u bytebite.service -n 120 --no-pager
 8. `src/logic/forensic_analysis.py`: triage + timeline + report generation.
 9. `src/logic/local_llm.py`: llama.cpp subprocess integration.
 10. `scripts/forensic_post_analysis.py`: manual analysis on existing extraction folder.
+11. `scripts/run_test_suite.py`: structured validation test runner with evidence + CSV/XLSX outputs.
+12. `scripts/test_suite_config.example.json`: editable test-run template.
 
 ## 17. Recommended Investigator Run Sequence
 
@@ -262,3 +264,50 @@ python3 src/ui/forensic_runner.py
    3. `triage/high_priority/`
    4. `timeline/timeline.csv`
 
+## 18. Forensic Validation Suite (FOR1-FOR6)
+
+Copy and edit test config:
+```bash
+cd ~/ProductionProjectUI
+cp scripts/test_suite_config.example.json scripts/test_suite_config.json
+nano scripts/test_suite_config.json
+```
+
+Run full suite:
+```bash
+python3 scripts/run_test_suite.py --suite-config scripts/test_suite_config.json
+```
+
+Mac one-command run + sync + open:
+```bash
+cd "/Users/ryan/Documents/Desktop/Leeds Beckett/2025 Production Project/ProductionProjectUI"
+./scripts/run_test_and_sync_mac.sh
+```
+
+Run only selected tests:
+```bash
+python3 scripts/run_test_suite.py --suite-config scripts/test_suite_config.json --tests FOR1,FOR2,FOR3
+```
+
+Output location (default, USB-only):
+```text
+<USB_MOUNT>/bytebite_forensic_tests/<UTC_TIMESTAMP>-<CASE_ID>/
+  summary.json
+  FOR1_device_detect/
+  FOR2_extract_dcim/
+  FOR3_hashed_data/
+  FOR4_store_usb/
+  FOR5_ai_analysis/
+  FOR6_report/
+  reports/forensic_test_report.xlsx
+  suite_config_resolved.json
+  run_meta.json
+```
+
+Notes:
+1. Install Excel dependency if needed: `sudo apt-get install -y python3-openpyxl`.
+2. `forensic_test_report.xlsx` includes tabs: `FOR Results`, `FOR1`, `FOR2`, `FOR3`, `FOR4`, `FOR5`, `FOR6`, `AI Summary`.
+3. A cumulative workbook is updated each run at `<USB_MOUNT>/bytebite_forensic_tests/forensic_test_master.xlsx` (override with `master_results_xlsx` or `--master-xlsx`).
+4. `FOR6` attempts to generate the `AI Summary` tab via your local LLM config (`llm.enabled`, `llm.binary`, `llm.model`).
+5. For live Pi runs, tune `adb_wait_timeout_s`, `for2_remote_candidates`, and `usb_mount_path` in `scripts/test_suite_config.json`. If `auto_detect_usb=true`, the runner will try writable mounts under `/media/<user>`, `/media/kali`, and `/mnt`.
+6. If no writable USB is found, the suite exits with an error and does not write to local storage.

@@ -1,5 +1,6 @@
 """Entry point for the ByteBite UI running on the Raspberry Pi."""
 import os
+import subprocess
 import sys
 
 # Prefer local virtualenv packages (ttkthemes lives here)
@@ -20,7 +21,19 @@ from ui.main_window import MainWindow
 from buttons import init_buttons, cleanup_buttons
 
 
+def _disable_display_sleep() -> None:
+    display = os.environ.get("DISPLAY", ":0")
+    env = dict(os.environ)
+    env["DISPLAY"] = display
+    for cmd in (["xset", "s", "off"], ["xset", "-dpms"], ["xset", "s", "noblank"]):
+        try:
+            subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
+        except Exception:
+            continue
+
+
 def main() -> None:
+    _disable_display_sleep()
     try:
         root = tk.Tk()
     except tk.TclError as exc:

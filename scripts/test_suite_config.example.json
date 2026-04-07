@@ -1,0 +1,80 @@
+{
+  "case_id": "CASE-001",
+  "device_serial": "",
+  "adb_bin": "adb",
+  "adb_wait_timeout_s": 12.0,
+  "output_root": "",
+  "master_results_xlsx": "",
+  "for2_remote_path": "/sdcard",
+  "for2_remote_candidates": [
+    "/sdcard",
+    "/internal storage",
+    "/storage/emulated/0",
+    "/storage/self/primary",
+    "/sdcard/Download",
+    "/sdcard/Documents",
+    "/sdcard/DCIM",
+    "/sdcard/Pictures",
+    "/sdcard/Movies",
+    "/sdcard/Android/media"
+  ],
+  "usb_mount_path": "/media/kali/BYTEBITE_USB",
+  "auto_detect_usb": true,
+  "keyword_list": [
+    "gun",
+    "knife",
+    "murder",
+    "burner",
+    "drugs",
+    "encrypted",
+    "target",
+    "device",
+    "victim",
+    "blade",
+    "weapon",
+    "police",
+    "operation",
+    "getaway",
+    "escape",
+    "kidnap",
+    "prison",
+    "smuggle",
+    "bullet",
+    "shank"
+  ],
+  "text_extensions": [
+    ".txt",
+    ".pdf",
+    ".docx",
+    ".log",
+    ".json",
+    ".xml",
+    ".csv",
+    ".md",
+    ".html"
+  ],
+  "max_text_scan_files": 200,
+  "for5_timing_iterations": 25,
+  "for5_force_rescan_per_iteration": true,
+  "for6_target_files": [
+    {
+      "file_name": "O Death.txt",
+      "ground_truth": "safe"
+    },
+    {
+      "file_name": "Marcus.txt",
+      "ground_truth": "high_priority"
+    },
+    {
+      "file_name": "Firearms Manual.pdf",
+      "ground_truth": "suspicious"
+    }
+  ],
+  "for6_iterations": 1,
+  "for6_max_chars": 1200,
+  "for6_context_tokens": 1024,
+  "for6_max_tokens": 120,
+  "for6_temperature": 0.1,
+  "for6_use_policy_override": true,
+  "for6_pass_accuracy_pct": 100.0
+}

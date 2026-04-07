@@ -9,3 +9,11 @@ __pycache__/
 
 .pytest_cache/
 .mypy_cache/
+
+# local runtime and generated artifacts
+.codex_backups/
+test_assets/
+test_results/
+test_runs/
+scripts/test_suite_config.json
+scripts/__pycache__/

@@ -71,7 +71,6 @@ _backend = "none"
 _cleanup_registered = False
 _gpiod_request: Any | None = None
 _gpiod_stop = threading.Event()
-_gpiod_thread: threading.Thread | None = None
 _gpiod_last_event_ts: dict[int, float] = {}
 _gpiod_root: Any | None = None
 _gpiod_line_to_cb: dict[int, Callable[[], None]] = {}
@@ -108,18 +107,9 @@ def init_buttons(
 ) -> None:
     """Initialize GPIO and attach callbacks (no-op if GPIO or root missing)."""
     global _active
-    global _buttons
     global _pins
     global _backend
     global _cleanup_registered
-    global _gpiod_request
-    global _gpiod_thread
-    global _gpiod_last_event_ts
-    global _gpiod_root
-    global _gpiod_line_to_cb
-    global _gpiod_idle
-    global _gpiod_prev
-    global _gpiod_init_error
     if root is None:
         return
     _pins = _load_nav_pins()
@@ -185,7 +175,6 @@ def cleanup_buttons() -> None:
     global _gpiod_request
     global _gpiod_root
     global _gpiod_line_to_cb
-    global _gpiod_thread
     global _gpiod_last_event_ts
     global _gpiod_idle
     global _gpiod_prev
@@ -228,7 +217,6 @@ def cleanup_buttons() -> None:
         _gpiod_request = None
     _gpiod_root = None
     _gpiod_line_to_cb = {}
-    _gpiod_thread = None
     _gpiod_last_event_ts = {}
     _gpiod_idle = {}
     _gpiod_prev = {}
@@ -269,7 +257,7 @@ def _init_gpiozero(root, on_left, on_right, on_enter, bouncetime_ms: int) -> boo
 
 
 def _init_gpiod(root, on_left, on_right, on_enter, bouncetime_ms: int = 200) -> bool:
-    global _active, _gpiod_request, _gpiod_thread, _gpiod_last_event_ts
+    global _active, _gpiod_request, _gpiod_last_event_ts
     global _gpiod_root, _gpiod_line_to_cb, _gpiod_idle, _gpiod_prev, _gpiod_after_id
     global _gpiod_init_error
     if GPIOD is None:

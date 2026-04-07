@@ -23,21 +23,34 @@ except Exception:  # pragma: no cover - optional dependency
     ImageTk = None
 
 from logic import controls
+from logic.adb import Adb
 from logic.forensic_search import ForensicSearchResult, run_forensic_keyword_search
 from logic.runtime_paths import build_default_config, load_or_create_config, resolve_config_path
-from logic.system_info import get_battery_percentage
 
 
-PALETTE = {
+DARK_PALETTE = {
     "bg": "#14171f",
     "panel": "#1a1e28",
     "text": "#f8f9fa",
+    "on_primary": "#ffffff",
     "muted": "#a4acb7",
     "primary": "#2a9fd6",  # Cyborg blue
     "accent": "#77b300",  # Cyborg green
     "danger": "#df3e3e",
     "hover": "#232a35",
 }
+LIGHT_PALETTE = {
+    "bg": "#eaf2fb",
+    "panel": "#f4f8fd",
+    "text": "#122033",
+    "on_primary": "#ffffff",
+    "muted": "#3f5168",
+    "primary": "#2e648f",
+    "accent": "#2f9a40",
+    "danger": "#c23a3a",
+    "hover": "#d8e4f2",
+}
+PALETTE = dict(DARK_PALETTE)
 BOOTSTRAP_ACTIVE = False
 DEFAULT_AUTO_FORENSIC_KEYWORDS = [
     "murder",
@@ -61,33 +74,26 @@ DEFAULT_AUTO_FORENSIC_KEYWORDS = [
 ]
 
 
-def _configure_style(master: tk.Tk) -> None:
+def _configure_style(master: tk.Tk, dark_mode: bool = True) -> None:
     global PALETTE, BOOTSTRAP_ACTIVE
+    PALETTE = dict(DARK_PALETTE if dark_mode else LIGHT_PALETTE)
     BOOTSTRAP_ACTIVE = False
     style = None
-    # Prefer ttkbootstrap Cyborg theme if available
+    # Prefer ttkbootstrap when available, with explicit light/dark theme choice.
     if TBStyle:
-        try:
-            style = TBStyle("cyborg")
-            BOOTSTRAP_ACTIVE = True
-            colors = style.colors
-            PALETTE = {
-                "bg": colors.bg,
-                "panel": colors.secondary,
-                "text": colors.fg,
-                "muted": colors.muted,
-                "primary": colors.primary,
-                "accent": colors.success,
-                "danger": colors.danger,
-                "hover": colors.selectbg,
-            }
-        except Exception:
-            style = None
+        theme_candidates = ["cyborg"] if dark_mode else ["flatly", "litera", "minty", "cosmo", "journal", "clam"]
+        for theme_name in theme_candidates:
+            try:
+                style = TBStyle(theme_name)
+                BOOTSTRAP_ACTIVE = True
+                break
+            except Exception:
+                style = None
     if style is None:
         style = ThemedStyle(master) if ThemedStyle else ttk.Style(master)
         if ThemedStyle:
             try:
-                style.set_theme("equilux")
+                style.set_theme("equilux" if dark_mode else "clam")
             except Exception:
                 style.set_theme("clam")
         else:
@@ -114,7 +120,7 @@ def _configure_style(master: tk.Tk) -> None:
         font=("Helvetica", 20, "bold"),
         padding=(28, 22),
         background=PALETTE["primary"],
-        foreground=PALETTE["bg"],
+        foreground=PALETTE["on_primary"],
         borderwidth=1,
         relief="flat",
     )
@@ -155,7 +161,7 @@ def _configure_style(master: tk.Tk) -> None:
 
 class MainWindow(ttk.Frame):
     def __init__(self, master: tk.Tk) -> None:
-        _configure_style(master)
+        _configure_style(master, dark_mode=True)
         super().__init__(master, padding=2)
         self.configure(style="Bg.TFrame")
         self.grid(sticky="nsew")
@@ -169,6 +175,7 @@ class MainWindow(ttk.Frame):
         self.splash_img: Optional[tk.PhotoImage] = self._load_image("src/assets/bb.png")
         self.bg_img: Optional[tk.PhotoImage] = self._load_image("src/assets/bg.jpg", size=(800, 480))
         self.bg_label: Optional[tk.Label] = None
+        self.home_canvas: Optional[tk.Canvas] = None
         self.theme = tk.StringVar(value="dark")
         self.settings_state = {
             "dark_mode": tk.BooleanVar(value=True),
@@ -190,14 +197,17 @@ class MainWindow(ttk.Frame):
             "Messages": tk.BooleanVar(value=False),
             "All": tk.BooleanVar(value=False),
         }
+        self.adb = Adb()
+        self.victim_connected = False
+        self.connection_border: dict[str, tk.Frame] = {}
+        self._conn_check_inflight = False
         self.auto_forensic_keywords = self._load_auto_forensic_keywords()
 
-        self.battery_var = tk.StringVar(value="Battery: --%")
         self.status_var = tk.StringVar(value="Use Left/Right to navigate. Enter to select.")
 
         self._build_layout()
         self._bind_keys(master)
-        self._refresh_battery()
+        self._poll_victim_connection()
 
     # Layout builders
     def _build_layout(self) -> None:
@@ -211,6 +221,7 @@ class MainWindow(ttk.Frame):
             self.content_frame.columnconfigure(i, weight=1)
         self.content_frame.rowconfigure(0, weight=1)
         self._build_bottom_bar()
+        self._build_connection_border()
 
         self._show_splash()
 
@@ -218,18 +229,11 @@ class MainWindow(ttk.Frame):
         top = ttk.Frame(self, style="Bg.TFrame")
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(0, weight=1)
-        top.columnconfigure(1, weight=2)
+        top.columnconfigure(1, weight=0)
         top.columnconfigure(2, weight=1)
 
         title = ttk.Label(top, text="BYTEBITE", anchor="center", font=("Helvetica", 20, "bold"))
         title.grid(row=0, column=1, sticky="n", pady=(6, 2))
-
-        battery_frame = ttk.Frame(top)
-        battery_frame.grid(row=0, column=2, sticky="e", padx=(0, 12), pady=(10, 0))
-        self.battery_bar = ttk.Progressbar(battery_frame, length=100, mode="determinate", maximum=100)
-        self.battery_bar.grid(row=0, column=0, sticky="e")
-        battery_label = ttk.Label(battery_frame, textvariable=self.battery_var, font=("Helvetica", 10))
-        battery_label.grid(row=1, column=0, sticky="e", pady=(4, 0))
 
     def _build_bottom_bar(self) -> None:
         status = ttk.Label(self, textvariable=self.status_var, font=("Helvetica", 11), foreground=PALETTE["muted"])
@@ -248,6 +252,9 @@ class MainWindow(ttk.Frame):
         if self.bg_label:
             self.bg_label.destroy()
             self.bg_label = None
+        if self.home_canvas:
+            self.home_canvas.destroy()
+            self.home_canvas = None
         if self.center_frame:
             self.center_frame.destroy()
             self.center_frame = None
@@ -258,32 +265,34 @@ class MainWindow(ttk.Frame):
         self.status_var.set("Use Left/Right to navigate. Enter to select.")
 
         self._set_background()
-
+        self.content_frame.update_idletasks()
+        frame_w = max(1, int(self.content_frame.winfo_width()))
+        frame_h = max(1, int(self.content_frame.winfo_height()))
+        self.home_canvas = tk.Canvas(
+            self.content_frame,
+            width=frame_w,
+            height=frame_h,
+            highlightthickness=0,
+            bd=0,
+            relief="flat",
+            bg=PALETTE["bg"],
+        )
+        self.home_canvas.place(relx=0.5, rely=0.5, anchor="center", relwidth=1, relheight=1)
+        if self.bg_img:
+            self.home_canvas.create_image(frame_w // 2, frame_h // 2, image=self.bg_img, anchor="center")
         if self.logo_img:
-            logo_label = ttk.Label(self.content_frame, image=self.logo_img, anchor="center", style="Bg.TFrame")
-            logo_label.place(relx=0.5, rely=0.2, anchor="center")
-
-        # Place buttons individually on the background (no shared container)
-        # Keep the two primary actions horizontally aligned with the bottom buttons
-        # but reduce their width so they stay fully on screen on the 800x480 panel.
-        self._add_menu_button(
-            self.content_frame, label="Forensic", command=self._on_forensic, relx=0.2, rely=0.5, width=20, ipady=24
-        )
-        self._add_menu_button(
-            self.content_frame, label="Offensive", command=self._on_offensive, relx=0.8, rely=0.5, width=20, ipady=24
-        )
-        self._add_menu_button(
-            self.content_frame, label="Settings", command=self._on_settings, relx=0.2, rely=0.9, width=12
-        )
-        self._add_menu_button(
-            self.content_frame, label="About", command=self._on_about, relx=0.8, rely=0.9, width=12
-        )
-
+            self.home_canvas.create_image(frame_w // 2, int(frame_h * 0.20), image=self.logo_img, anchor="center")
+        self._add_home_canvas_button("Forensic", self._on_forensic, 0.25, 0.38, 292, 130)
+        self._add_home_canvas_button("Offensive", self._on_offensive, 0.75, 0.38, 292, 130)
+        self._add_home_canvas_button("Settings", self._on_settings, 0.24, 0.73, 200, 92)
+        self._add_home_canvas_button("About", self._on_about, 0.76, 0.73, 200, 92)
+        self._update_connection_border()
         self._update_selection()
 
     def _show_splash(self) -> None:
         self.current_screen = "splash"
         self._clear_content()
+        self._update_connection_border()
         if self.splash_after_id:
             self.after_cancel(self.splash_after_id)
 
@@ -319,23 +328,29 @@ class MainWindow(ttk.Frame):
         self.current_screen = title.lower()
         self._clear_content()
         self._set_background()
+        self._update_connection_border()
         self.center_frame = ttk.Frame(self.content_frame, style="Bg.TFrame", padding=0)
         self.center_frame.place(relx=0.5, rely=0.5, anchor="center")
         detail = ttk.Frame(self.center_frame, style="Bg.TFrame", padding=8)
         detail.grid(row=0, column=0, sticky="n")
         detail.columnconfigure(0, weight=1)
 
-        heading = ttk.Label(detail, text=title, font=("Helvetica", 20, "bold"), anchor="center")
+        is_about = title.strip().lower() == "about"
+        heading_size = 30 if is_about else 20
+        body_size = 18 if is_about else 12
+        hint_size = 16 if is_about else 11
+
+        heading = ttk.Label(detail, text=title, font=("Helvetica", heading_size, "bold"), anchor="center")
         heading.grid(row=0, column=0, sticky="n", pady=(0, 12))
 
-        text = ttk.Label(detail, text=body, justify="center", wraplength=720, font=("Helvetica", 12))
+        text = ttk.Label(detail, text=body, justify="center", wraplength=720, font=("Helvetica", body_size))
         text.grid(row=1, column=0, sticky="n", pady=(0, 24))
 
         back_hint = ttk.Label(
             detail,
-            text="Press Enter to return home.",
-            font=("Helvetica", 11),
-            foreground="#c6d2df",
+            text="Left = Back",
+            font=("Helvetica", hint_size),
+            foreground=PALETTE["muted"],
         )
         back_hint.grid(row=2, column=0, sticky="n")
 
@@ -345,6 +360,7 @@ class MainWindow(ttk.Frame):
         self.current_screen = title.lower()
         self._clear_content()
         self._set_background()
+        self._update_connection_border()
 
         self.center_frame = ttk.Frame(self.content_frame, style="Bg.TFrame", padding=0)
         self.center_frame.place(relx=0.5, rely=0.5, anchor="center")
@@ -395,7 +411,7 @@ class MainWindow(ttk.Frame):
 
         back_hint = ttk.Label(
             wrapper,
-            text="Left = Back  |  Right = Move  |  Enter = Toggle/Execute",
+            text="Left = Back  |  Right = Move Down  |  Enter = Toggle/Execute",
             font=("Helvetica", 11),
             foreground=PALETTE["muted"],
         )
@@ -406,6 +422,7 @@ class MainWindow(ttk.Frame):
     def _show_progress_screen(self, title: str, on_cancel: Callable[[], None]) -> None:
         self.current_screen = f"{title.lower()}_progress"
         self._clear_content()
+        self._update_connection_border()
         wrap = ttk.Frame(self.content_frame, style="Bg.TFrame", padding=8)
         wrap.grid(row=0, column=1, sticky="n")
         wrap.columnconfigure(0, weight=1)
@@ -481,6 +498,108 @@ class MainWindow(ttk.Frame):
             btn.grid(row=row or 0, column=col or 0, padx=22, pady=16, sticky=sticky or "nsew", ipady=ipady or 16)
         self.menu_items.append({"type": "button", "name": label, "button": btn, "command": command})
 
+    def _add_home_button(
+        self,
+        parent: ttk.Frame,
+        label: str,
+        command: Callable[[], None],
+        relx: float,
+        rely: float,
+        width_px: int,
+        height_px: int,
+    ) -> None:
+        btn = RoundedHomeButton(
+            parent,
+            text=label,
+            command=command,
+            width=width_px,
+            height=height_px,
+            radius=26,
+        )
+        btn.place(relx=relx, rely=rely, anchor="center")
+        self.menu_items.append({"type": "home_button", "name": label, "widget": btn, "command": command})
+
+    def _add_home_canvas_button(
+        self,
+        label: str,
+        command: Callable[[], None],
+        relx: float,
+        rely: float,
+        width_px: int,
+        height_px: int,
+    ) -> None:
+        if not self.home_canvas:
+            return
+        canvas = self.home_canvas
+        frame_w = max(1, int(self.content_frame.winfo_width()))
+        frame_h = max(1, int(self.content_frame.winfo_height()))
+        cx = int(relx * frame_w)
+        cy = int(rely * frame_h)
+        x1 = cx - width_px // 2
+        y1 = cy - height_px // 2
+        x2 = x1 + width_px
+        y2 = y1 + height_px
+        tag = f"home_btn_{len(self.menu_items)}"
+        fill_ids, border_ids = self._draw_canvas_rounded_rect(canvas, x1, y1, x2, y2, 26, tag)
+        arc_ids = border_ids.get("arcs", [])
+        line_ids = border_ids.get("lines", [])
+        text_id = canvas.create_text(
+            cx,
+            cy,
+            text=label,
+            fill=PALETTE["text"],
+            font=("Helvetica", 20 if height_px >= 106 else 17, "bold"),
+            tags=(tag,),
+        )
+        canvas.tag_bind(tag, "<Button-1>", lambda _e, cmd=command: cmd())
+        self.menu_items.append(
+            {
+                "type": "home_canvas_button",
+                "name": label,
+                "command": command,
+                "canvas": canvas,
+                "fill_ids": fill_ids,
+                "border_arc_ids": arc_ids,
+                "border_line_ids": line_ids,
+                "text_id": text_id,
+            }
+        )
+
+    def _draw_canvas_rounded_rect(
+        self,
+        canvas: tk.Canvas,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        radius: int,
+        tag: str,
+    ) -> tuple[list[int], dict[str, list[int]]]:
+        fill = PALETTE["panel"]
+        outline = "#2f3744"
+        r = max(8, min(radius, (x2 - x1) // 2 - 2, (y2 - y1) // 2 - 2))
+        fill_ids = [
+            canvas.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline="", tags=(tag,)),
+            canvas.create_rectangle(x1, y1 + r, x2, y2 - r, fill=fill, outline="", tags=(tag,)),
+            canvas.create_oval(x1, y1, x1 + 2 * r, y1 + 2 * r, fill=fill, outline="", tags=(tag,)),
+            canvas.create_oval(x2 - 2 * r, y1, x2, y1 + 2 * r, fill=fill, outline="", tags=(tag,)),
+            canvas.create_oval(x2 - 2 * r, y2 - 2 * r, x2, y2, fill=fill, outline="", tags=(tag,)),
+            canvas.create_oval(x1, y2 - 2 * r, x1 + 2 * r, y2, fill=fill, outline="", tags=(tag,)),
+        ]
+        arc_ids = [
+            canvas.create_arc(x1, y1, x1 + 2 * r, y1 + 2 * r, start=90, extent=90, style="arc", outline=outline, width=2, tags=(tag,)),
+            canvas.create_arc(x2 - 2 * r, y1, x2, y1 + 2 * r, start=0, extent=90, style="arc", outline=outline, width=2, tags=(tag,)),
+            canvas.create_arc(x2 - 2 * r, y2 - 2 * r, x2, y2, start=270, extent=90, style="arc", outline=outline, width=2, tags=(tag,)),
+            canvas.create_arc(x1, y2 - 2 * r, x1 + 2 * r, y2, start=180, extent=90, style="arc", outline=outline, width=2, tags=(tag,)),
+        ]
+        line_ids = [
+            canvas.create_line(x1 + r, y1, x2 - r, y1, fill=outline, width=2, tags=(tag,)),
+            canvas.create_line(x2, y1 + r, x2, y2 - r, fill=outline, width=2, tags=(tag,)),
+            canvas.create_line(x1 + r, y2, x2 - r, y2, fill=outline, width=2, tags=(tag,)),
+            canvas.create_line(x1, y1 + r, x1, y2 - r, fill=outline, width=2, tags=(tag,)),
+        ]
+        return fill_ids, {"arcs": arc_ids, "lines": line_ids}
+
     # Navigation
     def _bind_keys(self, master: tk.Tk) -> None:
         master.bind("<Left>", lambda _: self._handle_left())
@@ -489,6 +608,9 @@ class MainWindow(ttk.Frame):
         master.bind("<KP_Enter>", lambda _: self._activate_selection())
         master.bind("<Escape>", lambda _: self._show_home())
 
+    def _is_about_screen(self) -> bool:
+        return self.current_screen == "about"
+
     def _handle_left(self) -> None:
         if self.current_screen != "home":
             self._show_home()
@@ -496,20 +618,29 @@ class MainWindow(ttk.Frame):
         self._move_selection(-1)
 
     def _handle_right(self) -> None:
-        if self.current_screen != "home":
-            self._move_selection(1)
+        if self._is_about_screen():
+            self.status_var.set("About: Left = Back.")
             return
-        self._move_selection(1)
+        if self.current_screen != "home":
+            self._move_selection(1, wrap=True)
+            return
+        self._move_selection(1, wrap=True)
 
-    def _move_selection(self, delta: int) -> None:
+    def _move_selection(self, delta: int, wrap: bool = True) -> None:
         if not self.menu_items:
             return
-        self.selected_index = (self.selected_index + delta) % len(self.menu_items)
+        if wrap:
+            self.selected_index = (self.selected_index + delta) % len(self.menu_items)
+        else:
+            self.selected_index = max(0, min(len(self.menu_items) - 1, self.selected_index + delta))
         self._update_selection()
 
     def _activate_selection(self) -> None:
         if self.current_screen == "splash":
             self._show_home()
+            return
+        if self._is_about_screen():
+            self.status_var.set("About: Left = Back.")
             return
         if not self.menu_items:
             if self.current_screen != "home" and self.current_action_command:
@@ -524,6 +655,8 @@ class MainWindow(ttk.Frame):
             var = item.get("var")
             if isinstance(var, tk.BooleanVar):
                 var.set(not var.get())
+                if self.current_screen == "forensic":
+                    self._sync_forensic_options(str(item.get("name", "")))
                 self._update_selection()
             return
         command = item.get("command")
@@ -553,6 +686,33 @@ class MainWindow(ttk.Frame):
                         btn.configure(style="Selected.TButton" if is_selected else "Accent.TButton")
                 continue
 
+            if item_type == "home_button":
+                widget = item.get("widget")
+                if isinstance(widget, RoundedHomeButton):
+                    widget.set_selected(is_selected)
+                continue
+
+            if item_type == "home_canvas_button":
+                canvas = item.get("canvas")
+                fill_ids = item.get("fill_ids", [])
+                border_arc_ids = item.get("border_arc_ids", [])
+                border_line_ids = item.get("border_line_ids", [])
+                text_id = item.get("text_id")
+                if not isinstance(canvas, tk.Canvas):
+                    continue
+                fill = PALETTE["primary"] if is_selected else PALETTE["panel"]
+                border = PALETTE["accent"] if is_selected else "#2f3744"
+                text_color = PALETTE["on_primary"] if is_selected else PALETTE["text"]
+                for obj_id in fill_ids:
+                    canvas.itemconfigure(obj_id, fill=fill)
+                for obj_id in border_arc_ids:
+                    canvas.itemconfigure(obj_id, outline=border)
+                for obj_id in border_line_ids:
+                    canvas.itemconfigure(obj_id, fill=border)
+                if isinstance(text_id, int):
+                    canvas.itemconfigure(text_id, fill=text_color)
+                continue
+
             if item_type == "toggle":
                 lbl = item.get("label")
                 name = str(item.get("name", "Option"))
@@ -571,20 +731,20 @@ class MainWindow(ttk.Frame):
             self.status_var.set(f"Selected: {selected}. Use Left/Right to navigate. Enter to select.")
             return
         selected = str(self.menu_items[self.selected_index].get("name", "Option"))
-        self.status_var.set(f"Selected: {selected}. Left=Back, Right=Move, Enter=Toggle/Execute.")
+        self.status_var.set(f"Selected: {selected}. Left=Back, Right=Move Down, Enter=Toggle/Execute.")
 
     # Actions
     def _on_forensic(self) -> None:
-        self.status_var.set("Forensic: Left=Back, Right=Move, Enter=Toggle/Execute.")
+        self.status_var.set("Forensic: Left=Back, Right=Move Down, Enter=Toggle/Execute.")
         self._show_forensic_screen()
 
     def _on_offensive(self) -> None:
         options = {
             "Keylogger": tk.BooleanVar(value=True),
             "Malware injection": tk.BooleanVar(value=False),
-            "Network scan": tk.BooleanVar(value=False),
+            "Adware": tk.BooleanVar(value=False),
         }
-        self.status_var.set("Offensive: Left=Back, Right=Move, Enter=Toggle/Execute.")
+        self.status_var.set("Offensive: Left=Back, Right=Move Down, Enter=Toggle/Execute.")
         self._show_toggle_screen("Offensive", options, "Launch", lambda: self._start_task("Offensive", options))
 
     def _on_settings(self) -> None:
@@ -593,24 +753,13 @@ class MainWindow(ttk.Frame):
             "Sound alerts": self.settings_state["sound_alerts"],
             "Auto-refresh": self.settings_state["auto_refresh"],
         }
-        self.status_var.set("Settings: Left=Back, Right=Move, Enter=Toggle/Execute.")
+        self.status_var.set("Settings: Left=Back, Right=Move Down, Enter=Toggle/Execute.")
         self._show_toggle_screen("Settings", options, "Apply", self._apply_settings)
 
     def _on_about(self) -> None:
         message = controls.show_about()
         self.status_var.set("About")
         self._show_detail_screen("About", message)
-
-    # Battery
-    def _refresh_battery(self) -> None:
-        value = get_battery_percentage()
-        if value is None:
-            self.battery_var.set("Battery: n/a")
-            self.battery_bar["value"] = 0
-        else:
-            self.battery_var.set(f"Battery: {value}%")
-            self.battery_bar["value"] = value
-        self.after(15000, self._refresh_battery)
 
     def _load_logo(self) -> Optional[tk.PhotoImage]:
         return self._load_image("src/assets/logo.png")
@@ -626,6 +775,17 @@ class MainWindow(ttk.Frame):
             if size:
                 img = img.resize(size, Image.LANCZOS)
             return ImageTk.PhotoImage(img)
+        except Exception:
+            return None
+
+    def _load_pil_image(self, path: str, size: Optional[tuple[int, int]] = None):
+        if Image is None:
+            return None
+        try:
+            img = Image.open(path)
+            if size:
+                img = img.resize(size, Image.LANCZOS)
+            return img
         except Exception:
             return None
 
@@ -661,16 +821,17 @@ class MainWindow(ttk.Frame):
         self.current_screen = "forensic"
         self._clear_content()
         self._set_background()
+        self._update_connection_border()
+        self.forensic_results_text = None
 
         self.center_frame = ttk.Frame(self.content_frame, style="Bg.TFrame", padding=0)
         self.center_frame.place(relx=0.5, rely=0.5, anchor="center")
         wrapper = ttk.Frame(self.center_frame, style="Bg.TFrame", padding=8)
         wrapper.grid(row=0, column=0, sticky="n")
         wrapper.columnconfigure(0, weight=1)
-        wrapper.columnconfigure(1, weight=1)
 
         heading = ttk.Label(wrapper, text="Forensic Search", font=("Helvetica", 20, "bold"), anchor="center")
-        heading.grid(row=0, column=0, columnspan=2, pady=(0, 6))
+        heading.grid(row=0, column=0, pady=(0, 6))
 
         subtitle = ttk.Label(
             wrapper,
@@ -678,20 +839,20 @@ class MainWindow(ttk.Frame):
             font=("Helvetica", 11),
             foreground=PALETTE["muted"],
         )
-        subtitle.grid(row=1, column=0, columnspan=2, pady=(0, 12))
+        subtitle.grid(row=1, column=0, pady=(0, 12))
 
         options_frame = ttk.Frame(wrapper, style="Bg.TFrame")
-        options_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 8))
-        for i in range(5):
-            options_frame.columnconfigure(i, weight=1)
+        options_frame.grid(row=2, column=0, sticky="ew", pady=(4, 8))
+        options_frame.columnconfigure(0, weight=1)
 
         for idx, (label, var) in enumerate(self.forensic_options.items()):
             item = ttk.Frame(options_frame, style="Bg.TFrame")
-            item.grid(row=0, column=idx, padx=6, sticky="ew")
+            item.grid(row=idx, column=0, sticky="ew", pady=6)
+            item.columnconfigure(0, weight=1)
             text = ttk.Label(item, text=label, font=("Helvetica", 11))
-            text.grid(row=0, column=0, padx=(0, 4))
+            text.grid(row=0, column=0, sticky="w", padx=(0, 8))
             toggle = ToggleSwitch(item, var=var, width=46, height=24)
-            toggle.grid(row=0, column=1)
+            toggle.grid(row=0, column=1, sticky="e")
             self.menu_items.append({"type": "toggle", "name": label, "var": var, "label": text, "toggle": toggle})
 
         if BOOTSTRAP_ACTIVE:
@@ -709,7 +870,7 @@ class MainWindow(ttk.Frame):
                 command=self._trigger_forensic_search,
                 style="Accent.TButton",
             )
-        self.forensic_search_button.grid(row=3, column=0, columnspan=2, pady=(6, 10), ipadx=12, ipady=6)
+        self.forensic_search_button.grid(row=3, column=0, pady=(8, 10), ipadx=12, ipady=6)
         self.menu_items.append(
             {
                 "type": "action",
@@ -719,41 +880,13 @@ class MainWindow(ttk.Frame):
             }
         )
 
-        results_wrap = ttk.Frame(wrapper, style="Bg.TFrame")
-        results_wrap.grid(row=4, column=0, columnspan=2, sticky="nsew")
-        results_wrap.columnconfigure(0, weight=1)
-        results_wrap.rowconfigure(0, weight=1)
-
-        self.forensic_results_text = tk.Text(
-            results_wrap,
-            height=12,
-            width=98,
-            wrap="word",
-            bg=PALETTE["panel"],
-            fg=PALETTE["text"],
-            insertbackground=PALETTE["text"],
-            borderwidth=1,
-            relief="solid",
-        )
-        self.forensic_results_text.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(results_wrap, orient="vertical", command=self.forensic_results_text.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.forensic_results_text.configure(yscrollcommand=scroll.set)
-        auto_keywords = ", ".join(self.auto_forensic_keywords[:8]) + ", ..."
-        self._set_forensic_results_text(
-            "Ready.\n"
-            f"Search root (auto): {Path(self._default_search_root()).expanduser()}\n"
-            f"Keyword profile (auto): {auto_keywords}\n"
-            "Use Right to move, Enter to toggle/execute, Left to go back."
-        )
-
         back_hint = ttk.Label(
             wrapper,
-            text="Left = Back  |  Right = Move  |  Enter = Toggle/Execute",
+            text="Left = Back  |  Right = Move Down  |  Enter = Toggle/Execute",
             font=("Helvetica", 11),
             foreground=PALETTE["muted"],
         )
-        back_hint.grid(row=5, column=0, columnspan=2, pady=(8, 0))
+        back_hint.grid(row=4, column=0, pady=(8, 0))
         self.current_action_command = self._trigger_forensic_search
         self.selected_index = 0
         self._update_selection()
@@ -791,6 +924,30 @@ class MainWindow(ttk.Frame):
     def _run_forensic_search_worker(self, root: Path, keywords: list[str], categories: list[str]) -> None:
         result = run_forensic_keyword_search(root, keywords, categories)
         self.forensic_result_queue.put((root, result))
+
+    def _sync_forensic_options(self, changed_name: str) -> None:
+        """Keep forensic toggle interactions consistent and meaningful."""
+        changed = changed_name.strip().lower()
+        all_var = self.forensic_options.get("All")
+        non_all_keys = ["Photos", "Video", "Documents", "Messages"]
+        if not isinstance(all_var, tk.BooleanVar):
+            return
+
+        if changed == "all":
+            if all_var.get():
+                for key in non_all_keys:
+                    var = self.forensic_options.get(key)
+                    if isinstance(var, tk.BooleanVar):
+                        var.set(True)
+            return
+
+        all_selected = True
+        for key in non_all_keys:
+            var = self.forensic_options.get(key)
+            if isinstance(var, tk.BooleanVar) and not var.get():
+                all_selected = False
+                break
+        all_var.set(all_selected)
 
     def _poll_forensic_search_queue(self) -> None:
         if not self.forensic_running:
@@ -869,6 +1026,62 @@ class MainWindow(ttk.Frame):
         self.bg_label = tk.Label(self.content_frame, image=self.bg_img, borderwidth=0, highlightthickness=0)
         self.bg_label.place(relx=0.5, rely=0.5, anchor="center", relwidth=1, relheight=1)
 
+    def _build_connection_border(self) -> None:
+        thickness = 4
+        self.connection_border = {
+            "top": tk.Frame(self, bg="#00d26a", height=thickness),
+            "bottom": tk.Frame(self, bg="#00d26a", height=thickness),
+            "left": tk.Frame(self, bg="#00d26a", width=thickness),
+            "right": tk.Frame(self, bg="#00d26a", width=thickness),
+        }
+        self._update_connection_border()
+
+    def _set_connection_border_visible(self, visible: bool) -> None:
+        if not self.connection_border:
+            return
+        if not visible:
+            for frame in self.connection_border.values():
+                frame.place_forget()
+            return
+        self.connection_border["top"].place(x=0, y=0, relwidth=1.0)
+        self.connection_border["bottom"].place(x=0, rely=1.0, relwidth=1.0, anchor="sw")
+        self.connection_border["left"].place(x=0, y=0, relheight=1.0)
+        self.connection_border["right"].place(relx=1.0, y=0, relheight=1.0, anchor="ne")
+        for frame in self.connection_border.values():
+            frame.lift()
+
+    def _update_connection_border(self) -> None:
+        show = self.current_screen == "home" and self.victim_connected
+        self._set_connection_border_visible(show)
+
+    def _check_victim_connected(self) -> bool:
+        result = self.adb.devices()
+        if not result.ok:
+            return False
+        lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        for line in lines[1:]:
+            cols = line.split()
+            if len(cols) >= 2 and cols[1] == "device":
+                return True
+        return False
+
+    def _poll_victim_connection(self) -> None:
+        if not self._conn_check_inflight:
+            self._conn_check_inflight = True
+            worker = threading.Thread(target=self._poll_victim_connection_worker, daemon=True)
+            worker.start()
+        self.after(2000, self._poll_victim_connection)
+
+    def _poll_victim_connection_worker(self) -> None:
+        connected = self._check_victim_connected()
+        self.after(0, lambda: self._apply_connection_state(connected))
+
+    def _apply_connection_state(self, connected: bool) -> None:
+        self._conn_check_inflight = False
+        if connected != self.victim_connected:
+            self.victim_connected = connected
+            self._update_connection_border()
+
     # Task orchestration (stubbed)
     def _start_task(self, title: str, options: Dict[str, tk.BooleanVar]) -> None:
         selected = [key for key, var in options.items() if var.get()]
@@ -895,10 +1108,13 @@ class MainWindow(ttk.Frame):
         dark = self.settings_state["dark_mode"].get()
         sound = self.settings_state["sound_alerts"].get()
         auto = self.settings_state["auto_refresh"].get()
-        self.status_var.set(
-            f"Settings applied (dark: {'on' if dark else 'off'}, sound: {'on' if sound else 'off'}, auto-refresh: {'on' if auto else 'off'})."
-        )
+        self.theme.set("dark" if dark else "light")
+        _configure_style(self.winfo_toplevel(), dark_mode=dark)
+        self.configure(style="Bg.TFrame")
         self._show_home()
+        self.status_var.set(
+            f"Settings applied (theme: {'dark' if dark else 'light'}, sound: {'on' if sound else 'off'}, auto-refresh: {'on' if auto else 'off'})."
+        )
 
 
 class ToggleSwitch(tk.Canvas):
@@ -951,3 +1167,105 @@ class ToggleSwitch(tk.Canvas):
         self.create_arc(x1, y2 - 2 * r, x1 + 2 * r, y2, start=180, extent=90, fill=color, outline=color)
         self.create_rectangle(x1 + r, y1, x2 - r, y2, fill=color, outline=color)
         self.create_rectangle(x1, y1 + r, x2, y2 - r, fill=color, outline=color)
+
+
+class RoundedHomeButton(tk.Canvas):
+    """Canvas-based rounded button used for the home menu."""
+
+    def __init__(
+        self,
+        parent,
+        text: str,
+        command: Callable[[], None],
+        width: int = 240,
+        height: int = 108,
+        radius: int = 22,
+    ) -> None:
+        super().__init__(
+            parent,
+            width=width,
+            height=height,
+            highlightthickness=0,
+            highlightbackground=PALETTE["bg"],
+            highlightcolor=PALETTE["bg"],
+            bd=0,
+            relief="flat",
+            bg=PALETTE["bg"],
+            takefocus=0,
+        )
+        self.command = command
+        self.text = text
+        self.radius = max(8, min(radius, min(width, height) // 2 - 2))
+        self._selected = False
+        self._backdrop_patch = None
+        self._backdrop_photo: Optional[tk.PhotoImage] = None
+        self._draw()
+        self.bind("<Button-1>", lambda _e: self.command())
+
+    def set_backdrop_patch(self, patch) -> None:
+        self._backdrop_patch = patch.copy()
+        self._draw()
+
+    def set_selected(self, selected: bool) -> None:
+        if self._selected == selected:
+            return
+        self._selected = selected
+        self._draw()
+
+    def _draw(self) -> None:
+        self.delete("all")
+        w = int(self.cget("width"))
+        h = int(self.cget("height"))
+        pad = 3
+
+        if self._backdrop_patch is not None and ImageTk is not None:
+            self._backdrop_photo = ImageTk.PhotoImage(self._backdrop_patch)
+            self.create_image(w // 2, h // 2, image=self._backdrop_photo)
+
+        fill = PALETTE["primary"] if self._selected else PALETTE["panel"]
+        outline = PALETTE["accent"] if self._selected else "#2f3744"
+        text_color = PALETTE["bg"] if self._selected else PALETTE["text"]
+
+        self._create_round_rect(pad, pad, w - pad, h - pad, self.radius, fill=fill, outline=outline, width=2)
+        self.create_text(
+            w // 2,
+            h // 2,
+            text=self.text,
+            fill=text_color,
+            font=("Helvetica", 20 if h >= 106 else 17, "bold"),
+        )
+
+    def _create_round_rect(
+        self,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        r: int,
+        *,
+        fill: str,
+        outline: str,
+        width: int = 2,
+    ) -> None:
+        # Fill pass (no outlines) prevents visible seam lines inside the button.
+        self.create_rectangle(x1 + r, y1, x2 - r, y2, fill=fill, outline="")
+        self.create_rectangle(x1, y1 + r, x2, y2 - r, fill=fill, outline="")
+        self.create_oval(x1, y1, x1 + 2 * r, y1 + 2 * r, fill=fill, outline="")
+        self.create_oval(x2 - 2 * r, y1, x2, y1 + 2 * r, fill=fill, outline="")
+        self.create_oval(x2 - 2 * r, y2 - 2 * r, x2, y2, fill=fill, outline="")
+        self.create_oval(x1, y2 - 2 * r, x1 + 2 * r, y2, fill=fill, outline="")
+
+        # Border pass.
+        if width <= 0:
+            return
+        off = width / 2
+        ax1, ay1, ax2, ay2 = x1 + off, y1 + off, x2 - off, y2 - off
+        rr = max(1, r - int(off))
+        self.create_arc(ax1, ay1, ax1 + 2 * rr, ay1 + 2 * rr, start=90, extent=90, style="arc", outline=outline, width=width)
+        self.create_arc(ax2 - 2 * rr, ay1, ax2, ay1 + 2 * rr, start=0, extent=90, style="arc", outline=outline, width=width)
+        self.create_arc(ax2 - 2 * rr, ay2 - 2 * rr, ax2, ay2, start=270, extent=90, style="arc", outline=outline, width=width)
+        self.create_arc(ax1, ay2 - 2 * rr, ax1 + 2 * rr, ay2, start=180, extent=90, style="arc", outline=outline, width=width)
+        self.create_line(ax1 + rr, ay1, ax2 - rr, ay1, fill=outline, width=width)
+        self.create_line(ax2, ay1 + rr, ax2, ay2 - rr, fill=outline, width=width)
+        self.create_line(ax1 + rr, ay2, ax2 - rr, ay2, fill=outline, width=width)
+        self.create_line(ax1, ay1 + rr, ax1, ay2 - rr, fill=outline, width=width)
