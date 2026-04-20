@@ -29,6 +29,18 @@ Raspberry Pi GPIO navigation buttons (BCM):
 
 Use module wiring that provides valid HIGH/LOW transitions on press (your tested setup uses 3.3V/VCC + OUT correctly).
 
+Power button (shutdown) wiring:
+1. Button switch contacts: `GPIO26` (physical pin `37`) to `GND` (physical pin `39` or `34`).
+2. Do not connect `5V` to GPIO pins.
+3. If your button has an LED ring, LED power can use `5V` + `GND` separately from switch contacts.
+
+Enable shutdown overlay on Pi:
+```bash
+cd ~/ProductionProjectUI
+./scripts/setup_power_button_pi.sh
+sudo reboot
+```
+
 ## 3. One-Time Software Setup (Pi)
 
 Clone/copy repo to:

@@ -1,7 +1,11 @@
 """Tkinter-based main window for the ByteBite UI."""
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 import queue
+import random
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable, Dict, List, Optional
@@ -24,8 +28,11 @@ except Exception:  # pragma: no cover - optional dependency
 
 from logic import controls
 from logic.adb import Adb
+from logic.forensic_profile import run_forensic_extraction
 from logic.forensic_search import ForensicSearchResult, run_forensic_keyword_search
-from logic.runtime_paths import build_default_config, load_or_create_config, resolve_config_path
+from logic.offensive_profile import run_controlled_simulation
+from logic.runlog import RunLogger
+from logic.runtime_paths import build_default_config, load_or_create_config, resolve_config_path, resolve_logs_dir
 
 
 DARK_PALETTE = {
@@ -161,7 +168,13 @@ def _configure_style(master: tk.Tk, dark_mode: bool = True) -> None:
 
 class MainWindow(ttk.Frame):
     def __init__(self, master: tk.Tk) -> None:
-        _configure_style(master, dark_mode=True)
+        self.project_root = Path(__file__).resolve().parents[2]
+        self.config_path = resolve_config_path(self.project_root)
+        self.cfg = load_or_create_config(self.config_path, build_default_config())
+        ui_cfg = dict(self.cfg.get("ui_settings") or {})
+        dark_mode_default = bool(ui_cfg.get("dark_mode", True))
+
+        _configure_style(master, dark_mode=dark_mode_default)
         super().__init__(master, padding=2)
         self.configure(style="Bg.TFrame")
         self.grid(sticky="nsew")
@@ -176,11 +189,9 @@ class MainWindow(ttk.Frame):
         self.bg_img: Optional[tk.PhotoImage] = self._load_image("src/assets/bg.jpg", size=(800, 480))
         self.bg_label: Optional[tk.Label] = None
         self.home_canvas: Optional[tk.Canvas] = None
-        self.theme = tk.StringVar(value="dark")
+        self.theme = tk.StringVar(value="dark" if dark_mode_default else "light")
         self.settings_state = {
-            "dark_mode": tk.BooleanVar(value=True),
-            "sound_alerts": tk.BooleanVar(value=False),
-            "auto_refresh": tk.BooleanVar(value=True),
+            "dark_mode": tk.BooleanVar(value=dark_mode_default),
         }
         self.progress_var: Optional[tk.DoubleVar] = None
         self.current_action_command: Optional[Callable[[], None]] = None
@@ -197,11 +208,26 @@ class MainWindow(ttk.Frame):
             "Messages": tk.BooleanVar(value=False),
             "All": tk.BooleanVar(value=False),
         }
-        self.adb = Adb()
+        self.offensive_options = {
+            "Spyware": tk.BooleanVar(value=True),
+            "Malware": tk.BooleanVar(value=False),
+            "Browser": tk.BooleanVar(value=False),
+        }
+        self.adb = Adb(serial=str(self.cfg.get("device_serial", "") or ""))
         self.victim_connected = False
         self.connection_border: dict[str, tk.Frame] = {}
         self._conn_check_inflight = False
         self.auto_forensic_keywords = self._load_auto_forensic_keywords()
+        self.logs_dir = resolve_logs_dir(self.project_root, self.cfg)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.results_workbook = self.logs_dir / "results.xlsx"
+        self.live_result_queue: "queue.Queue[tuple[str, bool, str]]" = queue.Queue()
+        self.live_result_pending: Optional[tuple[str, bool, str]] = None
+        self.progress_context = "idle"
+        self.progress_duration_seconds = 4.0
+        self.progress_started_at = 0.0
+        self.progress_after_id: Optional[str] = None
+        self.live_running = False
 
         self.status_var = tk.StringVar(value="Use Left/Right to navigate. Enter to select.")
 
@@ -419,7 +445,7 @@ class MainWindow(ttk.Frame):
         self.selected_index = 0
         self._update_selection()
 
-    def _show_progress_screen(self, title: str, on_cancel: Callable[[], None]) -> None:
+    def _show_progress_screen(self, title: str, on_cancel: Callable[[], None], show_cancel: bool = True) -> None:
         self.current_screen = f"{title.lower()}_progress"
         self._clear_content()
         self._update_connection_border()
@@ -434,14 +460,20 @@ class MainWindow(ttk.Frame):
         bar = ttk.Progressbar(wrap, variable=self.progress_var, mode="determinate", maximum=100, length=400)
         bar.grid(row=1, column=0, pady=(6, 12))
 
-        if BOOTSTRAP_ACTIVE:
-            cancel_btn = ttk.Button(wrap, text="Cancel", command=on_cancel, takefocus=False, bootstyle="danger")
+        if show_cancel:
+            if BOOTSTRAP_ACTIVE:
+                cancel_btn = ttk.Button(wrap, text="Cancel", command=on_cancel, takefocus=False, bootstyle="danger")
+            else:
+                cancel_btn = ttk.Button(wrap, text="Cancel", command=on_cancel, style="Danger.TButton")
+            cancel_btn.grid(row=2, column=0, pady=(6, 0), ipadx=12, ipady=6, sticky="n")
+            self.current_action_command = on_cancel
         else:
-            cancel_btn = ttk.Button(wrap, text="Cancel", command=on_cancel, style="Danger.TButton")
-        cancel_btn.grid(row=2, column=0, pady=(6, 0), ipadx=12, ipady=6, sticky="n")
+            hint = ttk.Label(wrap, text="Please wait...", font=("Helvetica", 11), foreground=PALETTE["muted"])
+            hint.grid(row=2, column=0, pady=(6, 0))
+            self.current_action_command = lambda: None
 
-        self._simulate_progress()
-        self.current_action_command = on_cancel
+        self._cancel_progress_tick()
+        self._tick_progress()
 
     def _add_menu_button(
         self,
@@ -739,19 +771,12 @@ class MainWindow(ttk.Frame):
         self._show_forensic_screen()
 
     def _on_offensive(self) -> None:
-        options = {
-            "Keylogger": tk.BooleanVar(value=True),
-            "Malware injection": tk.BooleanVar(value=False),
-            "Adware": tk.BooleanVar(value=False),
-        }
         self.status_var.set("Offensive: Left=Back, Right=Move Down, Enter=Toggle/Execute.")
-        self._show_toggle_screen("Offensive", options, "Launch", lambda: self._start_task("Offensive", options))
+        self._show_toggle_screen("Offensive", self.offensive_options, "Launch", self._trigger_offensive_live)
 
     def _on_settings(self) -> None:
         options = {
             "Dark mode": self.settings_state["dark_mode"],
-            "Sound alerts": self.settings_state["sound_alerts"],
-            "Auto-refresh": self.settings_state["auto_refresh"],
         }
         self.status_var.set("Settings: Left=Back, Right=Move Down, Enter=Toggle/Execute.")
         self._show_toggle_screen("Settings", options, "Apply", self._apply_settings)
@@ -830,12 +855,12 @@ class MainWindow(ttk.Frame):
         wrapper.grid(row=0, column=0, sticky="n")
         wrapper.columnconfigure(0, weight=1)
 
-        heading = ttk.Label(wrapper, text="Forensic Search", font=("Helvetica", 20, "bold"), anchor="center")
+        heading = ttk.Label(wrapper, text="Forensic", font=("Helvetica", 20, "bold"), anchor="center")
         heading.grid(row=0, column=0, pady=(0, 6))
 
         subtitle = ttk.Label(
             wrapper,
-            text="Use category toggles, then Execute. Keywords/root are automatic for button-only navigation.",
+            text="Choose categories, then Execute to run forensic collection.",
             font=("Helvetica", 11),
             foreground=PALETTE["muted"],
         )
@@ -859,7 +884,7 @@ class MainWindow(ttk.Frame):
             self.forensic_search_button = ttk.Button(
                 wrapper,
                 text="Execute",
-                command=self._trigger_forensic_search,
+                command=self._trigger_forensic_live,
                 takefocus=False,
                 bootstyle="success",
             )
@@ -867,7 +892,7 @@ class MainWindow(ttk.Frame):
             self.forensic_search_button = ttk.Button(
                 wrapper,
                 text="Execute",
-                command=self._trigger_forensic_search,
+                command=self._trigger_forensic_live,
                 style="Accent.TButton",
             )
         self.forensic_search_button.grid(row=3, column=0, pady=(8, 10), ipadx=12, ipady=6)
@@ -876,7 +901,7 @@ class MainWindow(ttk.Frame):
                 "type": "action",
                 "name": "Execute",
                 "button": self.forensic_search_button,
-                "command": self._trigger_forensic_search,
+                "command": self._trigger_forensic_live,
             }
         )
 
@@ -887,7 +912,7 @@ class MainWindow(ttk.Frame):
             foreground=PALETTE["muted"],
         )
         back_hint.grid(row=4, column=0, pady=(8, 0))
-        self.current_action_command = self._trigger_forensic_search
+        self.current_action_command = self._trigger_forensic_live
         self.selected_index = 0
         self._update_selection()
 
@@ -978,6 +1003,144 @@ class MainWindow(ttk.Frame):
         else:
             self.status_var.set(f"Forensic search complete: no hits across {result.files_scanned} scanned file(s).")
         self._set_forensic_results_text(self._format_forensic_result(root, result))
+
+    def _trigger_forensic_live(self) -> None:
+        if self.live_running:
+            self.status_var.set("Forensic already running.")
+            return
+
+        cfg = load_or_create_config(self.config_path, build_default_config())
+        forensic_cfg = dict(cfg.get("forensic") or {})
+        selected_categories = [name for name, var in self.forensic_options.items() if var.get()]
+        if not selected_categories:
+            self.status_var.set("Select at least one forensic category.")
+            return
+        forensic_cfg["selected_categories"] = selected_categories
+        forensic_cfg["pull_apk"] = bool(forensic_cfg.get("pull_apk", True))
+        forensic_cfg["collect_network"] = bool(forensic_cfg.get("collect_network", True))
+        forensic_cfg["root_mode"] = bool(forensic_cfg.get("root_mode", False))
+        cfg["forensic"] = forensic_cfg
+        self._save_config(cfg)
+
+        self.status_var.set("Forensic extraction running...")
+        self.live_running = True
+        self._start_live_progress("Forensic")
+
+        def worker() -> None:
+            run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            run_dir = self.logs_dir / run_id
+            logger = RunLogger(run_dir, results_workbook=self.results_workbook)
+            logger.set_meta(
+                run_id=run_id,
+                mode="forensic",
+                profile="ui_live_extraction",
+                selected_categories=selected_categories,
+                pull_apk=forensic_cfg["pull_apk"],
+                collect_network=forensic_cfg["collect_network"],
+                root_mode=forensic_cfg["root_mode"],
+            )
+            status = "success"
+            err = ""
+            try:
+                run_forensic_extraction(
+                    adb=self.adb,
+                    logger=logger,
+                    output_dir=run_dir / "forensic_artifacts",
+                    target_package=str(forensic_cfg.get("target_package", "") or ""),
+                    pull_apk=bool(forensic_cfg.get("pull_apk", True)),
+                    collect_network=bool(forensic_cfg.get("collect_network", True)),
+                    root_mode=bool(forensic_cfg.get("root_mode", False)),
+                    logcat_tail=int(forensic_cfg.get("logcat_tail", 1000)),
+                )
+            except Exception as exc:
+                status = "error"
+                err = str(exc)
+            out = logger.write(status=status, error=err or None)
+            ok = status == "success"
+            msg = f"Forensic {'PASS' if ok else 'FAIL'}\nRun: {out}\n{err}".strip()
+            self.live_result_queue.put(("forensic", ok, msg))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(200, self._poll_live_result_queue)
+
+    def _trigger_offensive_live(self) -> None:
+        if self.live_running:
+            self.status_var.set("Offensive already running.")
+            return
+
+        selected = [name for name, var in self.offensive_options.items() if var.get()]
+        if not selected:
+            self.status_var.set("Select at least one offensive option.")
+            return
+
+        cfg = load_or_create_config(self.config_path, build_default_config())
+        off_cfg = dict(cfg.get("offensive") or {})
+        # Keep your user-facing options and map them to safe backend toggles.
+        off_cfg["collect_network"] = bool(self.offensive_options["Spyware"].get())
+        cfg["offensive"] = off_cfg
+        self._save_config(cfg)
+
+        self.status_var.set("Offensive simulation running...")
+        self.live_running = True
+        self._start_live_progress("Offensive")
+
+        def worker() -> None:
+            run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            run_dir = self.logs_dir / run_id
+            logger = RunLogger(run_dir, results_workbook=self.results_workbook)
+            logger.set_meta(
+                run_id=run_id,
+                mode="offensive",
+                profile="ui_controlled_simulation",
+                selected_options=selected,
+                collect_network=bool(off_cfg.get("collect_network", True)),
+            )
+            status = "success"
+            err = ""
+            try:
+                run_controlled_simulation(
+                    adb=self.adb,
+                    logger=logger,
+                    marker_dir=str(off_cfg.get("marker_dir", "/sdcard/ByteBiteDemo")),
+                    open_url=(
+                        str(off_cfg.get("open_url", "https://example.com"))
+                        if self.offensive_options["Browser"].get()
+                        else "about:blank"
+                    ),
+                    cancel_flag=lambda: False,
+                    marker_file=str(off_cfg.get("marker_file", "bytebite_marker.txt")),
+                    trace_tag=str(off_cfg.get("trace_tag", "ByteBiteDemo")),
+                    trace_token=run_id,
+                    apk_path=(str(off_cfg.get("test_apk_path", "") or "") if self.offensive_options["Malware"].get() else ""),
+                    test_package=(str(off_cfg.get("test_package", "") or "") if self.offensive_options["Malware"].get() else ""),
+                    test_activity=(str(off_cfg.get("test_activity", "") or "") if self.offensive_options["Malware"].get() else ""),
+                    collect_network=bool(off_cfg.get("collect_network", True)),
+                    root_mode=False,
+                )
+            except Exception as exc:
+                status = "error"
+                err = str(exc)
+            out = logger.write(status=status, error=err or None)
+            ok = status == "success"
+            msg = f"Offensive {'PASS' if ok else 'FAIL'}\nOptions: {', '.join(selected)}\nRun: {out}\n{err}".strip()
+            self.live_result_queue.put(("offensive", ok, msg))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.after(200, self._poll_live_result_queue)
+
+    def _poll_live_result_queue(self) -> None:
+        if not self.live_running:
+            return
+        try:
+            mode, ok, message = self.live_result_queue.get_nowait()
+        except queue.Empty:
+            self.after(200, self._poll_live_result_queue)
+            return
+        self.live_running = False
+        self.live_result_pending = (mode, ok, message)
+        if self.progress_context == "live":
+            return
+        self._show_live_result(mode, ok, message)
 
     def _format_forensic_result(self, root: Path, result: ForensicSearchResult) -> str:
         lines = [
@@ -1086,35 +1249,83 @@ class MainWindow(ttk.Frame):
     def _start_task(self, title: str, options: Dict[str, tk.BooleanVar]) -> None:
         selected = [key for key, var in options.items() if var.get()]
         self.status_var.set(f"{title} task started with: {', '.join(selected) if selected else 'none'}")
+        self.progress_context = "legacy"
         self._show_progress_screen(title, lambda: self._cancel_task(title))
 
-    def _simulate_progress(self) -> None:
+    def _tick_progress(self) -> None:
         if not hasattr(self, "progress_var"):
             return
+
+        if self.progress_context == "live":
+            elapsed = max(0.0, time.monotonic() - self.progress_started_at)
+            ratio = min(1.0, elapsed / max(self.progress_duration_seconds, 0.1))
+            staged = min(96.0, 8.0 + ratio * 88.0)
+            current = self.progress_var.get()
+            if staged > current:
+                self.progress_var.set(staged)
+
+            if self.live_result_pending and elapsed >= self.progress_duration_seconds:
+                self.progress_var.set(100.0)
+                mode, ok, message = self.live_result_pending
+                self.live_result_pending = None
+                self.progress_context = "idle"
+                self._show_live_result(mode, ok, message)
+                return
+
+            self.progress_after_id = self.after(90, self._tick_progress)
+            return
+
         current = self.progress_var.get()
         if current >= 100:
             self.status_var.set("Task complete.")
+            self.progress_context = "idle"
             self.after(800, self._show_home)
             return
         self.progress_var.set(min(current + 7, 100))
-        self.after(400, self._simulate_progress)
+        self.progress_after_id = self.after(400, self._tick_progress)
 
     def _cancel_task(self, title: str) -> None:
+        self._cancel_progress_tick()
+        self.progress_context = "idle"
         self.status_var.set(f"{title} task canceled.")
         self._show_home()
 
+    def _cancel_progress_tick(self) -> None:
+        if self.progress_after_id is None:
+            return
+        try:
+            self.after_cancel(self.progress_after_id)
+        except Exception:
+            pass
+        self.progress_after_id = None
+
+    def _start_live_progress(self, title: str) -> None:
+        self.live_result_pending = None
+        self.progress_context = "live"
+        self.progress_duration_seconds = random.uniform(3.2, 4.8)
+        self.progress_started_at = time.monotonic()
+        self._show_progress_screen(title, lambda: None, show_cancel=False)
+
+    def _show_live_result(self, mode: str, ok: bool, message: str) -> None:
+        self.status_var.set(f"{mode.capitalize()} {'complete' if ok else 'failed'}.")
+        self._show_detail_screen(f"{mode.capitalize()} Result", message)
+
     def _apply_settings(self) -> None:
-        # In a real implementation, persist settings and re-apply theme/sound/refresh behavior here.
         dark = self.settings_state["dark_mode"].get()
-        sound = self.settings_state["sound_alerts"].get()
-        auto = self.settings_state["auto_refresh"].get()
+        cfg = load_or_create_config(self.config_path, build_default_config())
+        cfg["ui_settings"] = {
+            "dark_mode": bool(dark),
+        }
+        self._save_config(cfg)
         self.theme.set("dark" if dark else "light")
         _configure_style(self.winfo_toplevel(), dark_mode=dark)
         self.configure(style="Bg.TFrame")
         self._show_home()
-        self.status_var.set(
-            f"Settings applied (theme: {'dark' if dark else 'light'}, sound: {'on' if sound else 'off'}, auto-refresh: {'on' if auto else 'off'})."
-        )
+        self.status_var.set(f"Settings applied (theme: {'dark' if dark else 'light'}).")
+
+    def _save_config(self, cfg: dict) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
 
 class ToggleSwitch(tk.Canvas):
@@ -1136,14 +1347,36 @@ class ToggleSwitch(tk.Canvas):
         self.radius = height // 2
         self.pad = 3
         self.bind("<Button-1>", lambda _: self._toggle())
-        self.var.trace_add("write", lambda *_: self._draw())
+        self._trace_id = self.var.trace_add("write", self._on_var_change)
+        self.bind("<Destroy>", self._on_destroy, add="+")
         self._draw()
+
+    def _on_var_change(self, *_args: object) -> None:
+        if not self.winfo_exists():
+            return
+        try:
+            self._draw()
+        except tk.TclError:
+            return
+
+    def _on_destroy(self, _event: tk.Event) -> None:
+        trace_id = getattr(self, "_trace_id", None)
+        if not trace_id:
+            return
+        try:
+            self.var.trace_remove("write", trace_id)
+        except Exception:
+            pass
+        self._trace_id = None
 
     def _toggle(self) -> None:
         self.var.set(not self.var.get())
-        self._draw()
+        if self.winfo_exists():
+            self._draw()
 
     def _draw(self) -> None:
+        if not self.winfo_exists():
+            return
         self.delete("all")
         on = self.var.get()
         track_color = PALETTE["primary"] if on else PALETTE["hover"]
