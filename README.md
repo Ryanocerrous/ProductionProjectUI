@@ -1,6 +1,6 @@
 # ProductionProjectUI (ByteBite) - Device Manual
 
-ByteBite is a Raspberry Pi forensic workflow device with:
+ByteBite is a Raspberry Pi forensic/offensive cybersecurity device with:
 1. A physical-button UI (`left`, `right`, `enter`).
 2. Android evidence collection through ADB.
 3. Post-extraction analysis with rule-based + optional LLM triage.
@@ -323,3 +323,9 @@ Notes:
 4. `FOR6` attempts to generate the `AI Summary` tab via your local LLM config (`llm.enabled`, `llm.binary`, `llm.model`).
 5. For live Pi runs, tune `adb_wait_timeout_s`, `for2_remote_candidates`, and `usb_mount_path` in `scripts/test_suite_config.json`. If `auto_detect_usb=true`, the runner will try writable mounts under `/media/<user>`, `/media/kali`, and `/mnt`.
 6. If no writable USB is found, the suite exits with an error and does not write to local storage.
+
+## 19. Launch Scripts
+
+1. `run_app.sh`: main launcher used by the service; reuses an existing X display (`:0`/`:1`) or starts one with `startx`.
+2. `run_app_client.sh`: starts `src/app.py` and writes runtime logs to `/tmp/bytebite.log`.
+3. X display startup logs are written to `/tmp/xorg-bytebite.log` when a fresh display is started.
